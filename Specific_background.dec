@@ -1,0 +1,20 @@
+Decay B0
+    0.5 D- tau+ nu_tau PHSP;
+    0.5 D*- tau+ nu_tau PHSP;
+Enddecay
+
+CDecay anti-B0
+
+Decay D-
+    1.0 K*0 mu- anti-nu_mu  PHSP;
+Enddecay
+
+CDecay D+
+
+Decay D*-
+    1.0 D- pi0 VSS;
+Enddecay
+
+CDecay D*+
+
+End

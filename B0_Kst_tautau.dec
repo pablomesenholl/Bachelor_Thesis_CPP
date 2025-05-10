@@ -1,0 +1,20 @@
+Decay B0
+  1.0 K*0 tau+ tau- BTOSLLBALL 6;
+Enddecay
+
+CDecay anti-B0
+
+Decay tau+
+    0.5 mu+ nu_mu anti-nu_tau TAUOLA;
+    0.5 pi+ pi+ pi- anti-nu_tau TAUOLA;
+Enddecay
+
+CDecay tau-
+
+Decay K*0
+  1.000   K+    pi-    VSS;
+Enddecay
+
+CDecay anti-K*0
+
+End
