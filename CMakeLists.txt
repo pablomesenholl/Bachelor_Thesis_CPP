@@ -52,6 +52,7 @@ find_library(PHOTOS_PP Photospp HINTS /home/pablo/photos-install/lib)
 find_library(PHOTOS_PP_HEPMC3 PhotosppHepMC3Event HINTS /home/pablo/photos-install/lib)
 
 target_include_directories(test_evtgen PRIVATE
+        ${PYTHIA8_INCLUDE_DIR}
         /home/pablo/evtgen-new-install/include
 )
 
@@ -60,6 +61,7 @@ target_link_directories(test_evtgen PRIVATE
 )
 
 target_link_libraries(test_evtgen
+        ${PYTHIA8_LIBRARY}
         EvtGen
         EvtGenExternal
         ${TAUOLA_FORTRAN}

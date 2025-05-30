@@ -26,6 +26,7 @@ int main(int argc, char* argv[]) {
   pythia.readString("Beams:idA = 2212");
   pythia.readString("Beams:idB = 2212");
   pythia.readString("Beams:eCM = 13000.");
+  pythia.readString("Random:seed = 22");           // set seed
   pythia.readString("HardQCD:gg2bbbar = on");
   pythia.readString("HardQCD:qqbar2bbbar = on");
   pythia.readString("PhaseSpace:pTHatMin = 5.");
@@ -57,6 +58,7 @@ int main(int argc, char* argv[]) {
   Float_t kst_pt, kst_eta, kst_phi;
   Float_t tauPlus_pt, tauPlus_eta, tauPlus_phi;
   Float_t tauMinus_pt, tauMinus_eta, tauMinus_phi;
+  Float_t m_tauPlus, m_tauMinus, m_kst;
   tree.Branch("ptB", &ptB, "ptB/F");
   tree.Branch("etaB", &etaB, "etaB/F");
   tree.Branch("phiB", &phiB, "phiB/F");
@@ -82,6 +84,9 @@ int main(int argc, char* argv[]) {
   tree.Branch("tauMinus_pt", &tauMinus_pt, "tauMinus_pt/F");
   tree.Branch("tauMinus_eta", &tauMinus_eta, "tauMinus_eta/F");
   tree.Branch("tauMinus_phi", &tauMinus_phi, "tauMinus_phi/F");
+  tree.Branch("m_tauPlus", &m_tauPlus, "m_tauPlus/F");
+  tree.Branch("m_tauMinus", &m_tauMinus, "m_tauMinus/F");
+  tree.Branch("m_kst", &m_kst, "m_kst/F");
 
   std::mt19937 rng(41);
   std::normal_distribution<double> smearSVxy(0.01);

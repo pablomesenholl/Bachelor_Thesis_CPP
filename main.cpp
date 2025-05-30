@@ -17,6 +17,10 @@
 #include "TFile.h"
 #include "TTree.h"
 #include "TLorentzVector.h"
+#include "Math/Minimizer.h"
+#include "Math/Factory.h"
+#include "Math/Functor.h"
+#include <utility>
 #include <random>
 #include <iostream>
 #include <EvtGen/EvtGen.hh>
@@ -29,6 +33,159 @@
 #include "EvtGenBase/EvtAbsRadCorr.hh"
 #include "EvtGenBase/EvtDecayBase.hh"
 
+inline TVector2 computeMETvec(const std::vector<TLorentzVector>& visible){
+  TVector2 met(0,0);
+  for(const auto& v : visible){
+    met -= TVector2(v.Px(), v.Py());
+  }
+  return met;
+}
+
+inline double transverseMass(const TLorentzVector& visSum, const TVector2& metVec) {
+  double m_vis = visSum.M();
+  double pT_vis = visSum.Pt();
+  double E_T_vis = std::sqrt(m_vis*m_vis + pT_vis*pT_vis);
+  double ET_miss = metVec.Mod();
+  double dot = metVec.X()*visSum.Px() + metVec.Y()*visSum.Py();
+  double mT2 = m_vis*m_vis + 2.0 * (E_T_vis * ET_miss - dot);
+  return (mT2 > 0 ? std::sqrt(mT2) : 0.0); // ? operator: (condition ? ifTrue : ifFalse)
+}
+
+// function to do double collinear approximation reconstruction on both tau branches at the same time
+inline std::tuple<bool, TLorentzVector, TLorentzVector> reconstructTauDoubleCollinear(const TLorentzVector& visSum1, const TLorentzVector& visSum2, const TVector2& metVec) {
+  const double pT_vis1 = visSum1.Pt();
+  const double pT_vis2 = visSum2.Pt();
+  if (pT_vis1 <= 0 || pT_vis2 <= 0) return {false, visSum1, visSum2};  // no visible pT → nothing to do
+
+  // unit vector along the visible momentum in the transverse plane
+  TVector2 u1(visSum1.Px()/pT_vis1, visSum1.Py()/pT_vis1);
+  TVector2 u2(visSum2.Px()/pT_vis2, visSum2.Py()/pT_vis2);
+  double det = u1.X()*u2.Y() - u1.Y()*u2.X();
+  if (std::abs(det)<1e-6) {
+    return {false, visSum1, visSum2};
+  }
+
+  // project MET onto that unit vector
+  double a1 = ( metVec.X()*u2.Y() - metVec.Y()*u2.X() )/det;
+  double a2 = (-metVec.X()*u1.Y() + metVec.Y()*u1.X() )/det;
+  std::cout << "a1 = " << a1 << "a2 = " << a2 << "det" << det << std::endl;
+  if (a1 <= 0 && a2 <= 0) {
+    return {false, visSum1, visSum2};
+  }
+
+  // build a massless neutrino 4-vector (pz = 0)
+  TLorentzVector nu1;
+  nu1.SetPxPyPzE(u1.X()*a1, u1.Y()*a1, 0.0, a1);
+  TLorentzVector nu2;
+  nu2.SetPxPyPzE(u2.X()*a2, u2.Y()*a2, 0.0, a2);
+
+  // tau = visible + neutrino
+  return {true, visSum1 + nu1, visSum2 + nu2};
+}
+
+// do function for collinear approximation reconstruction for a single tau branch
+inline std::pair<bool, TLorentzVector> reconstructTauCollinear( const TLorentzVector& visSum, TVector2& metVec) {
+  const double pT_vis = visSum.Pt();
+  if (pT_vis <= 0) return {false, visSum};  // no visible pT → nothing to do
+
+  TVector2 u(visSum.Px()/pT_vis, visSum.Py()/pT_vis); // unit vector
+  const double alpha = metVec.X()*u.X() + metVec.Y()*u.Y(); // project MET onto that unit vector
+  if (alpha <= 0.0) {
+    return {false, visSum};
+  }
+  TLorentzVector nu;
+  nu.SetPxPyPzE(u.X()*alpha, u.Y()*alpha, 0.0, alpha); // construct neutrino track
+  return {true, visSum + nu};
+}
+
+// do function do try tau reconstruction but with transverse mass (if too low pt for collinear approx)
+inline TLorentzVector reconstructTauTransverseMass( const TLorentzVector& visSum, const TVector2& metVec) {
+  double mT = transverseMass(visSum, metVec);
+  double px_tau = visSum.Px() + metVec.X();
+  double py_tau = visSum.Py() + metVec.Y();
+  double pz_tau = visSum.Pz();
+  double p2_tau = px_tau*px_tau + py_tau*py_tau + pz_tau*pz_tau;
+  double E_tau  = std::sqrt(p2_tau + mT*mT);
+  TLorentzVector tau;
+  tau.SetPxPyPzE(px_tau, py_tau, pz_tau, E_tau);
+  return tau;
+}
+
+struct FitInputs {
+  TLorentzVector vis1, vis2, kst;
+  double METx, METy;
+  double sigmaMET, sigmaTau, sigmaPoint;
+  TVector3 PV, SV;
+};
+
+double fitfunction(const double *par, double *grad, void *fdata) {
+  //    par[0..2] = (p_nu1_x, p_nu1_y, p_nu1_z)
+  //    par[3..5] = (p_nu2_x, p_nu2_y, p_nu2_z)
+  auto const &in = *static_cast<FitInputs*>(fdata);
+  TLorentzVector nu1{ par[0], par[1], par[2], // build neutrino vectors
+    std::hypot(par[0], par[1], par[2]) };
+  TLorentzVector nu2{ par[3], par[4], par[5],
+    std::hypot(par[3], par[4], par[5]) };
+
+  //MET constraints
+  double Cx = (par[0]+par[3] - in.METx);
+  double Cy = (par[1]+par[4] - in.METy);
+
+  //Tau mass constraints
+  auto tau1 = in.vis1 + nu1;
+  auto tau2 = in.vis2 + nu2;
+  TLorentzVector Bfit = in.kst + tau1 + tau2;
+
+  // flight direction of B meson, original and reconstructed
+  TVector3 flight = in.SV - in.PV;
+  TVector3 u      = flight.Unit();
+  TVector3 pB = TVector3(Bfit.Px(), Bfit.Py(), Bfit.Pz());
+
+  double Cpoint = pB.Cross(u).Mag(); // |pB x u| minimal if collinear, what we want
+
+  double Ctau1 = tau1.M2() - 1.77686*1.77686; // tau mass^2 in GeV^2
+  double Ctau2 = tau2.M2() - 1.77686*1.77686;
+
+  // Build chi2
+  double chi2 = (Cx*Cx + Cy*Cy)/(in.sigmaMET*in.sigmaMET)
+              + (Ctau1*Ctau1 + Ctau2*Ctau2)/(in.sigmaTau*in.sigmaTau)
+              + (Cpoint*Cpoint)/(in.sigmaPoint*in.sigmaPoint);
+  return chi2;
+}
+
+std::array<TLorentzVector,2> FitNeutrinos(const FitInputs &in) {
+  // Create Minuit2 minimizer
+  auto minim = ROOT::Math::Factory::CreateMinimizer("Minuit2","Migrad");
+
+  // Wrap old fitfunction into a lambda of the right shape
+  auto wrappedFCN = [&](double const* par) -> double {
+    return fitfunction(par, nullptr, const_cast<FitInputs*>(&in));
+  };
+  // Wrap fitfuntion
+  ROOT::Math::Functor functor(wrappedFCN, /*ndim=*/6);
+  minim->SetFunction(functor);
+
+  // Initial guesses
+  double step = 0.1;
+  minim->SetVariable(0,"p1_x", in.METx/2, step);
+  minim->SetVariable(1,"p1_y", in.METy/2, step);
+  minim->SetVariable(2,"p1_z", 0, step);
+  minim->SetVariable(3,"p2_x", in.METx/2, step);
+  minim->SetVariable(4,"p2_y", in.METy/2, step);
+  minim->SetVariable(5,"p2_z", 0, step);
+
+  // Run MIGRAD
+  minim->Minimize();
+
+  // Retrieve results
+  const double *res = minim->X();
+  TLorentzVector nu1{ res[0], res[1], res[2],
+    std::hypot(res[0],res[1],res[2]) };
+  TLorentzVector nu2{ res[3], res[4], res[5],
+    std::hypot(res[3],res[4],res[5]) };
+
+  return { nu1, nu2 };
+}
 
 using namespace Pythia8;
 
@@ -37,12 +194,13 @@ int main(int argc, char* argv[]) {
   int nEvents = 5000;
   if (argc > 1) nEvents = atoi(argv[1]);
 
-  // 1) Configure Pythia for pp collisions @ 13 TeV, b-quark production
+  // Configure Pythia for pp collisions @ 13 TeV, b-quark production
   Pythia pythia;
 
   pythia.readString("Beams:idA = 2212");           // proton
   pythia.readString("Beams:idB = 2212");           // proton
   pythia.readString("Beams:eCM = 13000.");         // 13 TeV
+  pythia.readString("Random:seed = 22");           // set seed
   pythia.readString("HardQCD:gg2bbbar = on");      // turn on gg->bb
   pythia.readString("HardQCD:qqbar2bbbar = on");   // turn on qqbar->bb
   pythia.readString("PhaseSpace:pTHatMin = 5.");   // pT hat cut (GeV)
@@ -53,12 +211,12 @@ int main(int argc, char* argv[]) {
   pythia.readString("Beams:sigmaVertexY = 0.01");         // mm
   pythia.readString("Beams:sigmaVertexZ = 0.025");         // mm
 
-  // 2) Keep B0 mesons stable (will decay later via EvtGen)
+  // Keep B0 mesons stable (will decay later via EvtGen)
   pythia.readString("ParticleDecays:limitTau0 = on"); // limit very short lifetimes
   pythia.readString("511:mayDecay = off");          // B0 (PDG 511) stable
   pythia.readString("-511:mayDecay = off");         // anti-B0
 
-  // 3) Initialize
+  // Initialize pythia
   pythia.init();
 
   // ─── Initialize EvtGen ──────────────────────────────────────────────
@@ -90,7 +248,7 @@ int main(int argc, char* argv[]) {
 
 
   // 4) Prepare output ROOT file & TTree for B0 kinematics + vertices + uncertainties
-  TFile outFile("Simulation_Data.root", "RECREATE");
+  TFile outFile("Simulation_Data_Smeared.root", "RECREATE");
   TTree tree("Events", "B0 -> Kst Tau Tau production with vertices and uncertainties");
 
   // Kinematics
@@ -131,6 +289,7 @@ int main(int argc, char* argv[]) {
   Float_t kst_pt, kst_eta, kst_phi;
   Float_t tauPlus_pt, tauPlus_eta, tauPlus_phi;
   Float_t tauMinus_pt, tauMinus_eta, tauMinus_phi;
+  Float_t m_tauMinus, m_tauPlus, m_kst;
 
 
   tree.Branch("kst_pt", &kst_pt, "kst_pt/F");
@@ -142,16 +301,19 @@ int main(int argc, char* argv[]) {
   tree.Branch("tauMinus_pt", &tauMinus_pt, "tauMinus_pt/F");
   tree.Branch("tauMinus_eta", &tauMinus_eta, "tauMinus_eta/F");
   tree.Branch("tauMinus_phi", &tauMinus_phi, "tauMinus_phi/F");
+  tree.Branch("m_tauMinus", &m_tauMinus, "m_tauMinus/F");
+  tree.Branch("m_tauPlus", &m_tauPlus, "m_tauPlus/F");
+  tree.Branch("m_kst", &m_kst, "m_kst/F");
 
   // Random number generators for measurement smearing and uncertainties
   std::mt19937 rng(42);
-  std::normal_distribution<double> smearSVxy(0.01);    // mm (SV spatial resolution)
-  std::normal_distribution<double> smearSVz(0.01);      // mm
-  std::chi_squared_distribution<double> chi2Dist(6);   // chi2 with 2 DOF
+  std::normal_distribution<double> smearSVxy(0.0, 0.01);    // mm (SV spatial resolution)
+  std::normal_distribution<double> smearSVz(0.0, 0.01);      // mm
+  std::chi_squared_distribution<double> chi2Dist(1);   // chi2 with n DOF
 
 
 
-  // 5) Event loop: find all B0 in the event record
+  // Event loop: find all B0 in the event record
   for (int iEvent = 0; iEvent < nEvents; ++iEvent) {
     if (!pythia.next()) continue;
 
@@ -202,7 +364,7 @@ int main(int argc, char* argv[]) {
         SVyErr = smearSVxy.stddev();
         SVzErr = smearSVz.stddev();
         double chi2 = chi2Dist(rng);
-        double chi2ndf = chi2 / 6.0;  // Since DOF = 6
+        double chi2ndf = chi2 / 1.0;  // Since DOF = n
         vertexChi2 = chi2ndf;
 
         // ─── Hand this B0 to EvtGen ────────────────────────────
@@ -284,9 +446,29 @@ int main(int argc, char* argv[]) {
           continue;
               }
 
-        // define a little helper to sum only non‑neutrino four‑vectors:
-        auto sumVisible = [&](const std::vector<EvtParticle*>& leaves){
+        // collect all visible tracks from both tau decays (3prong, muon)
+        std::vector<TLorentzVector> tauVis;
+        tauVis.reserve(6);
+
+        auto addToTauDaughters = [&](const std::vector<EvtParticle*>& leaves){
+          for (auto p : leaves) {
+            int pdg = std::abs(EvtPDL::getStdHep(p->getId()));
+            if (pdg==12||pdg==14||pdg==16) continue;
+            auto p4 = p->getP4Lab();
+            tauVis.emplace_back(p4.get(1),p4.get(2),p4.get(3),p4.get(0));
+          }
+        };
+        addToTauDaughters(tauPLeaves);
+        addToTauDaughters(tauMLeaves);
+
+        // compute missing transverse energy, globally
+        TVector2 metGlobal = computeMETvec(tauVis);
+
+
+        // define a little helper to sum and collect only non‑neutrino four‑vectors:
+        auto sumVisible = [&](const std::vector<EvtParticle*>& leaves) -> std::pair<TLorentzVector, std::vector<TLorentzVector>>{
           TLorentzVector sum(0,0,0,0);
+          std::vector<TLorentzVector> visTracks;
           for(auto dau : leaves){
             int pdg = EvtPDL::getStdHep(dau->getId());
             std::cout << "[DEBUG]   leaf PDG="<<pdg<<"\n";
@@ -294,27 +476,63 @@ int main(int argc, char* argv[]) {
             auto p4 = dau->getP4Lab();
             TLorentzVector v(p4.get(1), p4.get(2), p4.get(3), p4.get(0));
             sum += v;
+            visTracks.push_back(v);
           }
-          return sum;
+          return std::make_pair(sum, visTracks);
         };
 
+        // relative pt error for low pt << 100GeV
+        double sigma_pt_rel = 0.007;
+
         // build your reco‑K* vector and fill:
-        TLorentzVector kstarReco = sumVisible(kstarLeaves);
-        kst_pt  = kstarReco.Pt();
+        TLorentzVector kstarReco = sumVisible(kstarLeaves).first;
+        double sigma_pt_Kst = kstarReco.Pt() * sigma_pt_rel;
+        std::normal_distribution<double> smearPt_Kst(kstarReco.Pt(), sigma_pt_Kst);
+        kst_pt  = smearPt_Kst(rng);
         kst_eta = kstarReco.Eta();
         kst_phi = kstarReco.Phi();
+        m_kst = kstarReco.M();
 
         // same for the τ+ → μ/3π branch:
-        TLorentzVector tauPvis = sumVisible(tauPLeaves);
-        tauPlus_pt  = tauPvis.Pt();
+        auto [tauMvisSum, tauMvisTracks] = sumVisible(tauMLeaves);
+        auto [tauPvisSum, tauPvisTracks] = sumVisible(tauPLeaves);
+
+        //build input structure called FitInputs
+        FitInputs in;
+        in.vis1 = tauMvisSum;
+        in.vis2 = tauPvisSum;
+        in.kst = kstarReco;
+        in.METx = metGlobal.X();
+        in.METy = metGlobal.Y();
+        in.sigmaMET = 1.0; // in GeV
+        in.sigmaTau = 0.1; // in GeV
+        in.sigmaPoint = 0.1; // in GeV
+        in.PV = TVector3 (PVx, PVy, PVz);
+        in.SV = TVector3 (SVx, SVy, SVz);
+
+        auto neutrinos = FitNeutrinos(in);
+        auto &nu1 = neutrinos[0];
+        auto &nu2 = neutrinos[1];
+
+        TLorentzVector tauMvis = in.vis1 + nu1;
+        TLorentzVector tauPvis = in.vis2 + nu2;
+
+        double sigma_pt_tauP = tauPvis.Pt() * sigma_pt_rel;
+        std::normal_distribution<double> smearPt_tauP(tauPvis.Pt(), sigma_pt_tauP);
+        tauPlus_pt  = smearPt_tauP(rng);
         tauPlus_eta = tauPvis.Eta();
         tauPlus_phi = tauPvis.Phi();
+        m_tauPlus = tauPvis.M();
+        std::cout << "[DEBUG] mass of Tau Plus: " << m_tauPlus << "\n";
 
         // …and for the τ‑ branch:
-        TLorentzVector tauMvis = sumVisible(tauMLeaves);
-        tauMinus_pt  = tauMvis.Pt();
+        double sigma_pt_tauM = tauMvis.Pt() * sigma_pt_rel;
+        std::normal_distribution<double> smearPt_tauM(tauMvis.Pt(), sigma_pt_tauM);
+        tauMinus_pt  = smearPt_tauM(rng);
         tauMinus_eta = tauMvis.Eta();
         tauMinus_phi = tauMvis.Phi();
+        m_tauMinus = tauMvis.M();
+        std::cout << "[DEBUG] mass of Tau Minus: " << m_tauMinus << "\n";
 
 
         tree.Fill();

@@ -19,9 +19,6 @@
 #include "EvtGenBase/EvtAbsRadCorr.hh"
 #include "EvtGenBase/EvtDecayBase.hh"
 
-#include "Math/Minimizer.h"
-#include "Math/Factory.h"
-#include "Math/Functor.h"
 
 // Define simplified geometric vertex chi2 minimization using ROOT::Math::Minimizer
 
@@ -118,6 +115,7 @@ int main(int argc, char* argv[]) {
     pythia.readString("Beams:idA = 2212");           // proton
     pythia.readString("Beams:idB = 2212");
     pythia.readString("Beams:eCM = 13000.");            // e.g. 13 TeV
+    pythia.readString("Random:seed = 22");           // set seed
     pythia.readString("PhaseSpace:pTHatMin = 10");
     pythia.readString("HardQCD:all = off");
     pythia.readString("HardQCD:gg2ccbar   = on");
@@ -153,6 +151,7 @@ int main(int argc, char* argv[]) {
     Float_t kst_pt, kst_eta, kst_phi;
     Float_t tau1_pt, tau1_eta, tau1_phi;
     Float_t tau3_pt, tau3_eta, tau3_phi;
+    Float_t m_tau1, m_tau3, m_kst;
     Float_t SVx, SVy, SVz;
     Float_t SVxErr = 0.005, SVyErr = 0.005, SVzErr = 0.01; // example SV smearing
     Float_t vertexChi2;
@@ -180,6 +179,9 @@ int main(int argc, char* argv[]) {
     tree.Branch("tau3_pt", &tau3_pt, "tau3_pt/F");
     tree.Branch("tau3_eta", &tau3_eta, "tau3_eta/F");
     tree.Branch("tau3_phi", &tau3_phi, "tau3_phi/F");
+    tree.Branch("m_tau3", &m_tau3, "m_tau3/F");
+    tree.Branch("m_tau1", &m_tau1, "m_tau1/F");
+    tree.Branch("m_kst", &m_kst, "m_kst/F");
 
     // Random number generators for measurement smearing and uncertainties
     std::mt19937 rng(40);
