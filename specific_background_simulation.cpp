@@ -2,6 +2,9 @@
 #include "TFile.h"
 #include "TTree.h"
 #include "TLorentzVector.h"
+#include "Math/Minimizer.h"
+#include "Math/Factory.h"
+#include "Math/Functor.h"
 #include <random>
 #include <iostream>
 #include <EvtGen/EvtGen.hh>
@@ -13,6 +16,93 @@
 #include "EvtGenExternal/EvtExternalGenList.hh"
 #include "EvtGenBase/EvtAbsRadCorr.hh"
 #include "EvtGenBase/EvtDecayBase.hh"
+
+TVector2 computeMETvec(const std::vector<TLorentzVector>& visible){
+  TVector2 met(0,0);
+  for(const auto& v : visible){
+    met -= TVector2(v.Px(), v.Py());
+  }
+  return met;
+}
+
+struct FitInputs {
+  TLorentzVector vis1, vis2, kst;
+  double METx, METy;
+  double sigmaMET, sigmaTau, sigmaPoint, sigmaB0;
+  TVector3 PV, SV;
+};
+
+double fitfunction(const double *par, double *grad, void *fdata) {
+  //    par[0..2] = (p_nu1_x, p_nu1_y, p_nu1_z)
+  //    par[3..5] = (p_nu2_x, p_nu2_y, p_nu2_z)
+  auto const &in = *static_cast<FitInputs*>(fdata);
+  TLorentzVector nu1{ par[0], par[1], par[2], // build neutrino vectors
+    std::hypot(par[0], par[1], par[2]) };
+  TLorentzVector nu2{ par[3], par[4], par[5],
+    std::hypot(par[3], par[4], par[5]) };
+
+  //MET constraints
+  double Cx = (par[0]+par[3] - in.METx);
+  double Cy = (par[1]+par[4] - in.METy);
+
+  //Tau mass constraints
+  auto tau1 = in.vis1 + nu1;
+  auto tau2 = in.vis2 + nu2;
+  TLorentzVector Bfit = in.kst + tau1 + tau2;
+
+  // flight direction of B meson, original and reconstructed
+  TVector3 flight = in.SV - in.PV;
+  TVector3 u      = flight.Unit();
+  TVector3 pB = TVector3(Bfit.Px(), Bfit.Py(), Bfit.Pz());
+
+  double Cpoint = pB.Cross(u).Mag(); // |pB x u| minimal if collinear, what we want
+
+  double Ctau1 = tau1.M2() - 1.77686*1.77686; // tau mass^2 in GeV^2
+  double Ctau2 = tau2.M2() - 1.77686*1.77686;
+
+  double CB0 = Bfit.M2() - 5.2797*5.2797; // B0 mass^2 in GeV^2
+
+  // Build chi2
+  double chi2 = (Cx*Cx + Cy*Cy)/(in.sigmaMET*in.sigmaMET)
+              + (Ctau1*Ctau1 + Ctau2*Ctau2)/(in.sigmaTau*in.sigmaTau)
+              + (Cpoint*Cpoint)/(in.sigmaPoint*in.sigmaPoint)
+              + (CB0*CB0)/(in.sigmaB0*in.sigmaB0);
+  return chi2;
+}
+
+std::array<TLorentzVector,2> FitNeutrinos(const FitInputs &in) {
+  // Create Minuit2 minimizer
+  auto minim = ROOT::Math::Factory::CreateMinimizer("Minuit2","Migrad");
+
+  // Wrap old fitfunction into a lambda of the right shape
+  auto wrappedFCN = [&](double const* par) -> double {
+    return fitfunction(par, nullptr, const_cast<FitInputs*>(&in));
+  };
+  // Wrap fitfuntion
+  ROOT::Math::Functor functor(wrappedFCN, /*ndim=*/6);
+  minim->SetFunction(functor);
+
+  // Initial guesses
+  double step = 0.1;
+  minim->SetVariable(0,"p1_x", in.METx/2, step);
+  minim->SetVariable(1,"p1_y", in.METy/2, step);
+  minim->SetVariable(2,"p1_z", 0, step);
+  minim->SetVariable(3,"p2_x", in.METx/2, step);
+  minim->SetVariable(4,"p2_y", in.METy/2, step);
+  minim->SetVariable(5,"p2_z", 0, step);
+
+  // Run MIGRAD
+  minim->Minimize();
+
+  // Retrieve results
+  const double *res = minim->X();
+  TLorentzVector nu1{ res[0], res[1], res[2],
+    std::hypot(res[0],res[1],res[2]) };
+  TLorentzVector nu2{ res[3], res[4], res[5],
+    std::hypot(res[3],res[4],res[5]) };
+
+  return { nu1, nu2 };
+}
 
 using namespace Pythia8;
 
@@ -91,7 +181,7 @@ int main(int argc, char* argv[]) {
   std::mt19937 rng(41);
   std::normal_distribution<double> smearSVxy(0.01);
   std::normal_distribution<double> smearSVz(0.01);
-  std::chi_squared_distribution<double> chi2Dist(6);
+  std::chi_squared_distribution<double> chi2Dist(1);
 
   // 4) Event loop
   for (int iEvent = 0; iEvent < nEvents; ++iEvent) {
@@ -143,7 +233,7 @@ int main(int argc, char* argv[]) {
         SVyErr = smearSVxy.stddev();
         SVzErr = smearSVz.stddev();
         double chi2 = chi2Dist(rng);
-        double chi2ndf = chi2 / 6.0;  // Since DOF = 6
+        double chi2ndf = chi2/1;  // Since DOF = 6
         vertexChi2 = chi2ndf;
 
         // EvtGen decay

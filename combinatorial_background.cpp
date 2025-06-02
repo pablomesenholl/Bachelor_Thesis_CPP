@@ -9,15 +9,6 @@
 #include <iostream>
 #include <array>
 #include <algorithm>
-#include <EvtGen/EvtGen.hh>
-#include <EvtGenBase/EvtParticleFactory.hh>
-#include <EvtGenBase/EvtPDL.hh>
-#include <EvtGenBase/EvtRandomEngine.hh>
-#include <EvtGenBase/EvtSimpleRandomEngine.hh>
-#include <EvtGenExternal/EvtPythiaEngine.hh>
-#include "EvtGenExternal/EvtExternalGenList.hh"
-#include "EvtGenBase/EvtAbsRadCorr.hh"
-#include "EvtGenBase/EvtDecayBase.hh"
 
 
 // Define simplified geometric vertex chi2 minimization using ROOT::Math::Minimizer
@@ -142,7 +133,7 @@ int main(int argc, char* argv[]) {
 
 
     // Prepare output ROOT file & TTree
-    TFile outFile("Combinatorial_Background.root", "RECREATE");
+    TFile outFile("Combinatorial_Background_smeared.root", "RECREATE");
     TTree tree("Events", "Random combinatorial background");
 
     Float_t PVx, PVy, PVz;
@@ -196,7 +187,7 @@ int main(int argc, char* argv[]) {
     for (int iEvent = 0; iEvent < nEvents; ++iEvent) {
         if (iEvent % 100 == 0) {
             std::cout << "Event" << iEvent << " and " << nEvents << "\n";
-          }
+        }
         if (!pythia.next()) continue;
 
         // Clear containers at start of each event
@@ -330,16 +321,10 @@ int main(int argc, char* argv[]) {
         TLorentzVector vB(bestTrip[1].px(), bestTrip[1].py(), bestTrip[1].pz(), bestTrip[1].e());
         TLorentzVector vC(bestTrip[2].px(), bestTrip[2].py(), bestTrip[2].pz(), bestTrip[2].e());
 
+
         TVector3 vtx;
         float chi2;
-        if (!FitVertex(tracks, 16.0 * 0.05, vtx, chi2)) continue;
-
-        // store daughter kinematics
-        TLorentzVector kstar = vK + vPi;
-        kst_pt  = kstar.Pt(); kst_eta = kstar.Eta(); kst_phi = kstar.Phi();
-        tau1_pt  = vMu.Pt(); tau1_eta = vMu.Eta(); tau1_phi = vMu.Phi();
-        TLorentzVector t3 = vA+vB+vC;
-        tau3_pt  = t3.Pt(); tau3_eta = t3.Eta(); tau3_phi = t3.Phi();
+        if (!FitVertex(tracks, 0.6, vtx, chi2)) continue;
 
         int ndof = static_cast<int>(tracks.size())*2 - 3;     // 2 constraints per track minus 3 free coords
         float chi2ndf = chi2 / ndof;
@@ -347,6 +332,27 @@ int main(int argc, char* argv[]) {
         SVy        = vtx.Y();
         SVz        = vtx.Z();
         vertexChi2 = chi2ndf;
+
+        // relative pt error for low pt << 100GeV
+        double sigma_pt_rel = 0.007;
+
+        TLorentzVector kstarVis = vK + vPi;
+        TLorentzVector tau1Vis = vMu;
+        TLorentzVector tau3Vis = vA + vB + vC;
+
+        // store daughter kinematics and smear pt
+        TLorentzVector kstar = vK + vPi;
+        double sigma_pt_Kst = kstar.Pt() * sigma_pt_rel;
+        std::normal_distribution<double> smearPt_Kst(kstar.Pt(), sigma_pt_Kst);
+        kst_pt  = smearPt_Kst(rng); kst_eta = kstar.Eta(); kst_phi = kstar.Phi(); m_kst = kstar.M();
+        TLorentzVector tau1 = vMu;
+        double sigma_pt_tau1 = tau1.Pt() * sigma_pt_rel;
+        std::normal_distribution<double> smearPt_tau1(tau1.Pt(), sigma_pt_tau1);
+        tau1_pt  = smearPt_tau1(rng); tau1_eta = tau1.Eta(); tau1_phi = tau1.Phi(); m_tau1 = tau1.M();
+        TLorentzVector t3 = vA+vB+vC;
+        double sigma_pt_t3 = t3.Pt() * sigma_pt_rel;
+        std::normal_distribution<double> smearPt_t3(t3.Pt(), sigma_pt_t3);
+        tau3_pt  = smearPt_t3(rng); tau3_eta = t3.Eta(); tau3_phi = t3.Phi(); m_tau3 = t3.M();
 
         std::cout << "kst_eta: " << kst_eta << std::endl;
         std::cout << "tau1_eta: " << tau1_eta << std::endl;

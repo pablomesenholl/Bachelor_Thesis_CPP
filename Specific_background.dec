@@ -5,11 +5,23 @@ Enddecay
 
 CDecay anti-B0
 
+Decay tau+
+    1.0 pi+ pi+ pi- anti-nu_tau TAUOLA;
+Enddecay
+
+CDecay tau-
+
 Decay D-
     1.0 K*0 mu- anti-nu_mu  PHSP;
 Enddecay
 
 CDecay D+
+
+Decay K*0
+    1.0   K+    pi-    VSS;
+Enddecay
+
+CDecay anti-K*0
 
 Decay D*-
     1.0 D- pi0 VSS;
