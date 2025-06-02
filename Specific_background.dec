@@ -1,12 +1,12 @@
 Decay B0
-    0.5 D- tau+ nu_tau PHSP;
-    0.5 D*- tau+ nu_tau PHSP;
+    0.5 D- tau+ nu_tau ISGW2;
+    0.5 D*- tau+ nu_tau ISGW2;
 Enddecay
 
 CDecay anti-B0
 
 Decay tau+
-    1.0 pi+ pi+ pi- anti-nu_tau TAUOLA;
+    1.000 pi+ pi+ pi-  nu_tau   TAUHADNU -0.108 0.7749 0.149 1.364 0.400 1.23 0.4;
 Enddecay
 
 CDecay tau-

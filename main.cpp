@@ -51,184 +51,6 @@ inline double transverseMass(const TLorentzVector& visSum, const TVector2& metVe
   return (mT2 > 0 ? std::sqrt(mT2) : 0.0); // ? operator: (condition ? ifTrue : ifFalse)
 }
 
-// function to do double collinear approximation reconstruction on both tau branches at the same time
-inline std::tuple<bool, TLorentzVector, TLorentzVector> reconstructTauDoubleCollinear(const TLorentzVector& visSum1, const TLorentzVector& visSum2, const TVector2& metVec) {
-  const double pT_vis1 = visSum1.Pt();
-  const double pT_vis2 = visSum2.Pt();
-  if (pT_vis1 <= 0 || pT_vis2 <= 0) return {false, visSum1, visSum2};  // no visible pT → nothing to do
-
-  // unit vector along the visible momentum in the transverse plane
-  TVector2 u1(visSum1.Px(), visSum1.Py());
-  TVector2 u2(visSum2.Px(), visSum2.Py());
-  double det = u1.X()*u2.Y() - u1.Y()*u2.X();
-  /*if (std::abs(det)<1e-6) {
-    return {false, visSum1, visSum2};
-  }*/
-
-  // project MET onto that unit vector
-  double a1 = ( metVec.X()*u2.Y() - metVec.Y()*u2.X() )/det;
-  double a2 = (-metVec.X()*u1.Y() + metVec.Y()*u1.X() )/det;
-  double x1 = 1/(1 + a1);
-  double x2 = 1/(1 + a2);
-  if (x1 <= 0 || x2 <= 0) {
-    return {false, visSum1, visSum2};
-  }
-  else if (x1 > 1 || x2 > 1) {return {false, visSum1, visSum2};}
-
-  // build a massless neutrino 4-vector (pz = 0)
-  TLorentzVector nu1;
-  nu1.SetPxPyPzE(u1.X()*x1, u1.Y()*x1, 0.0, a1);
-  TLorentzVector nu2;
-  nu2.SetPxPyPzE(u2.X()*x2, u2.Y()*x2, 0.0, a2);
-
-  // tau = visible + neutrino
-  return {true, visSum1 + nu1, visSum2 + nu2};
-}
-
-// do function for collinear approximation reconstruction for a single tau branch
-inline std::pair<bool, TLorentzVector> reconstructTauCollinear( const TLorentzVector& visSum, TVector2& metVec) {
-  const double pT_vis = visSum.Pt();
-  if (pT_vis <= 0) return {false, visSum};  // no visible pT → nothing to do
-
-  TVector2 u(visSum.Px()/pT_vis, visSum.Py()/pT_vis); // unit vector
-  const double alpha = metVec.X()*u.X() + metVec.Y()*u.Y(); // project MET onto that unit vector
-  if (alpha <= 0.0) {
-    return {false, visSum};
-  }
-  TLorentzVector nu;
-  nu.SetPxPyPzE(u.X()*alpha, u.Y()*alpha, 0.0, alpha); // construct neutrino track
-  return {true, visSum + nu};
-}
-
-// do function do try tau reconstruction but with transverse mass (if too low pt for collinear approx)
-inline TLorentzVector reconstructTauTransverseMass( const TLorentzVector& visSum, const TVector2& metVec) {
-  double mT = transverseMass(visSum, metVec);
-  double px_tau = visSum.Px() + metVec.X();
-  double py_tau = visSum.Py() + metVec.Y();
-  double pz_tau = visSum.Pz();
-  double p2_tau = px_tau*px_tau + py_tau*py_tau + pz_tau*pz_tau;
-  double E_tau  = std::sqrt(p2_tau + mT*mT);
-  TLorentzVector tau;
-  tau.SetPxPyPzE(px_tau, py_tau, pz_tau, E_tau);
-  return tau;
-}
-
-struct FitInputs {
-  TLorentzVector vis1, vis2, kst;
-  double METx, METy;
-  double sigmaMET, sigmaTau, sigmaPoint, sigmaB0;
-  TVector3 PV, SV;
-};
-
-double fitfunction(const double *par, double *grad, void *fdata) {
-  //    par[0..2] = (p_nu1_x, p_nu1_y, p_nu1_z)
-  //    par[3..5] = (p_nu2_x, p_nu2_y, p_nu2_z)
-  auto const &in = *static_cast<FitInputs*>(fdata);
-  TLorentzVector nu1{ par[0], par[1], par[2], // build neutrino vectors
-    std::hypot(par[0], par[1], par[2]) };
-  TLorentzVector nu2{ par[3], par[4], par[5],
-    std::hypot(par[3], par[4], par[5]) };
-
-  double E_vis1 = in.vis1.E();        // lab-frame energy of visible system
-  double p_vis1 = in.vis1.P();        // lab-frame |p| of visible system
-  double m_vis1 = in.vis1.M();        // invariant mass of visible system
-  double E_vis2 = in.vis2.E();        // lab-frame energy of visible system
-  double p_vis2 = in.vis2.P();        // lab-frame |p| of visible system
-  double m_vis2 = in.vis2.M();        // invariant mass of visible system
-  double mTau = 1.77686;  //GeV
-  double Evis1Star = (mTau*mTau + m_vis1*m_vis1) / (2.0 * mTau);
-  double pvis1Star = (mTau*mTau - m_vis1*m_vis1) / (2.0 * mTau);
-  double Evis2Star = (mTau*mTau + m_vis2*m_vis2) / (2.0 * mTau);
-  double pvis2Star = (mTau*mTau - m_vis2*m_vis2) / (2.0 * mTau);
-  double R_lab1 = p_vis1 / E_vis1;
-  double R_lab2 = p_vis2 / E_vis2;
-  double numerator1   = pvis1Star - R_lab1 * Evis1Star;
-  double denominator1 = R_lab1 * pvis1Star - Evis1Star;
-  double numerator2   = pvis2Star - R_lab2 * Evis2Star;
-  double denominator2 = R_lab2 * pvis2Star - Evis2Star;
-  double beta1 = numerator1 / denominator1;
-  double beta2 = numerator2 / denominator2;
-  double gamma1 = 1.0 / TMath::Sqrt(1.0 - beta1 * beta1);
-  double gamma2 = 1.0 / TMath::Sqrt(1.0 - beta2 * beta2);
-  double pInv1Star = pvis1Star;  // = (m_tau^2 - m_vis^2)/(2 m_tau)
-  double pInv2Star = pvis2Star;
-  double pNu_lab1 = gamma1 * pInv1Star * (1.0 + beta1);
-  double pNu_lab2 = gamma2 * pInv2Star * (1.0 + beta2);
-
-  double CpNu1 = pNu_lab1 - std::hypot(par[0], par[1], par[2]);
-  double CpNu2 = pNu_lab2 - std::hypot(par[3], par[4], par[5]);
-  double sigmapNu = 0.1; // in GeV
-
-  //MET constraints
-  double Cx = (par[0]+par[3] - in.METx);
-  double Cy = (par[1]+par[4] - in.METy);
-
-  //Tau mass constraints
-  auto tau1 = in.vis1 + nu1;
-  auto tau2 = in.vis2 + nu2;
-  TLorentzVector Bfit = in.kst + tau1 + tau2;
-
-  // flight direction of B meson, original and reconstructed
-  TVector3 flight = in.SV - in.PV;
-  TVector3 u      = flight.Unit();
-  TVector3 pB = TVector3(Bfit.Px(), Bfit.Py(), Bfit.Pz());
-
-  double Cpoint = pB.Cross(u).Mag(); // |pB x u| minimal if collinear, what we want
-
-  double Ctau1 = 1.77686 - tau1.M(); // tau mass in GeV
-  double Ctau2 = 1.77686 - tau2.M();
-
-  // Penalize large pz neutrino components
-  double sigmaPz = 10.0; // in GeV
-  double Cz1 = par[2];
-  double Cz2 = par[5];
-
-  double CB0 = Bfit.M2() - 5.2797*5.2797; // B0 mass^2 in GeV^2
-
-  // Build chi2
-  double chi2 = (Cx*Cx + Cy*Cy)/(in.sigmaMET*in.sigmaMET)
-              + (Ctau1*Ctau1 + Ctau2*Ctau2)/(in.sigmaTau*in.sigmaTau)
-              /*+ (Cz1*Cz1 + Cz2*Cz2)/(sigmaPz*sigmaPz)*/
-              + (Cpoint*Cpoint)/(in.sigmaPoint*in.sigmaPoint)
-              + (CpNu1*CpNu1 + CpNu2*CpNu2)/(sigmapNu);
-              // + (CB0*CB0)/(in.sigmaB0*in.sigmaB0);
-  return chi2;
-}
-
-std::array<TLorentzVector,2> FitNeutrinos(const FitInputs &in) {
-  // Create Minuit2 minimizer
-  auto minim = ROOT::Math::Factory::CreateMinimizer("Minuit2","Migrad");
-
-  // Wrap old fitfunction into a lambda of the right shape
-  auto wrappedFCN = [&](double const* par) -> double {
-    return fitfunction(par, nullptr, const_cast<FitInputs*>(&in));
-  };
-  // Wrap fitfuntion
-  ROOT::Math::Functor functor(wrappedFCN, /*ndim=*/6);
-  minim->SetFunction(functor);
-
-  // Initial guesses
-  double step = 0.1;
-  minim->SetVariable(0,"p1_x", in.METx/2, step);
-  minim->SetVariable(1,"p1_y", in.METy/2, step);
-  minim->SetVariable(2,"p1_z", 0, step);
-  minim->SetVariable(3,"p2_x", in.METx/2, step);
-  minim->SetVariable(4,"p2_y", in.METy/2, step);
-  minim->SetVariable(5,"p2_z", 0, step);
-
-  // Run MIGRAD
-  minim->Minimize();
-
-  // Retrieve results
-  const double *res = minim->X();
-  TLorentzVector nu1{ res[0], res[1], res[2],
-    std::hypot(res[0],res[1],res[2]) };
-  TLorentzVector nu2{ res[3], res[4], res[5],
-    std::hypot(res[3],res[4],res[5]) };
-
-  return { nu1, nu2 };
-}
-
 using namespace Pythia8;
 
 int main(int argc, char* argv[]) {
@@ -354,7 +176,7 @@ int main(int argc, char* argv[]) {
   std::mt19937 rng(42);
   std::normal_distribution<double> smearSVxy(0.0, 0.01);    // mm (SV spatial resolution)
   std::normal_distribution<double> smearSVz(0.0, 0.01);      // mm
-  std::chi_squared_distribution<double> chi2Dist(1);   // chi2 with n DOF
+  std::chi_squared_distribution<double> chi2Dist(9);   // chi2 with n DOF
 
 
 
@@ -409,7 +231,7 @@ int main(int argc, char* argv[]) {
         SVyErr = smearSVxy.stddev();
         SVzErr = smearSVz.stddev();
         double chi2 = chi2Dist(rng);
-        double chi2ndf = chi2 / 1.0;  // Since DOF = n
+        double chi2ndf = chi2 / 9.0;  // Since DOF = n
         vertexChi2 = chi2ndf;
 
         // ─── Hand this B0 to EvtGen ────────────────────────────
@@ -491,25 +313,6 @@ int main(int argc, char* argv[]) {
           continue;
               }
 
-        // collect all visible tracks from both tau decays (3prong, muon)
-        std::vector<TLorentzVector> tauVis;
-        tauVis.reserve(6);
-
-        auto addToTauDaughters = [&](const std::vector<EvtParticle*>& leaves){
-          for (auto p : leaves) {
-            int pdg = std::abs(EvtPDL::getStdHep(p->getId()));
-            if (pdg==12||pdg==14||pdg==16) continue;
-            auto p4 = p->getP4Lab();
-            tauVis.emplace_back(p4.get(1),p4.get(2),p4.get(3),p4.get(0));
-          }
-        };
-        addToTauDaughters(tauPLeaves);
-        addToTauDaughters(tauMLeaves);
-
-        // compute missing transverse energy, globally
-        TVector2 metGlobal = computeMETvec(tauVis);
-
-
         // define a little helper to sum and collect only non‑neutrino four‑vectors:
         auto sumVisible = [&](const std::vector<EvtParticle*>& leaves) -> std::pair<TLorentzVector, std::vector<TLorentzVector>>{
           TLorentzVector sum(0,0,0,0);
@@ -541,30 +344,6 @@ int main(int argc, char* argv[]) {
         // same for the tau branches
         TLorentzVector tauMvisSum = sumVisible(tauMLeaves).first;
         TLorentzVector tauPvisSum = sumVisible(tauPLeaves).first;
-
-        // compute transverse mass of ditau system and fill
-        mT_tautau = transverseMass(tauMvisSum + tauPvisSum, metGlobal);
-
-        //build input structure called FitInputs
-        FitInputs in;
-        in.vis1 = tauMvisSum;
-        in.vis2 = tauPvisSum;
-        in.kst = kstarReco;
-        in.METx = metGlobal.X();
-        in.METy = metGlobal.Y();
-        in.sigmaMET = 0.1; // in GeV
-        in.sigmaTau = 0.1; // in GeV
-        in.sigmaB0 = 0.3; // in GeV
-        in.sigmaPoint = 0.1; // in GeV
-        in.PV = TVector3 (PVx, PVy, PVz);
-        in.SV = TVector3 (SVx, SVy, SVz);
-
-        auto neutrinos = FitNeutrinos(in);
-        auto &nu1 = neutrinos[0];
-        auto &nu2 = neutrinos[1];
-
-        TLorentzVector tauMvis = in.vis1 + nu1;
-        TLorentzVector tauPvis = in.vis2 + nu2;
 
         double sigma_pt_tauP = tauPvisSum.Pt() * sigma_pt_rel;
         std::normal_distribution<double> smearPt_tauP(tauPvisSum.Pt(), sigma_pt_tauP);

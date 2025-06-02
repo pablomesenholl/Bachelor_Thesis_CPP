@@ -107,7 +107,7 @@ int main(int argc, char* argv[]) {
     pythia.readString("Beams:idB = 2212");
     pythia.readString("Beams:eCM = 13000.");            // e.g. 13 TeV
     pythia.readString("Random:seed = 22");           // set seed
-    pythia.readString("PhaseSpace:pTHatMin = 10");
+    pythia.readString("PhaseSpace:pTHatMin = 5");
     pythia.readString("HardQCD:all = off");
     pythia.readString("HardQCD:gg2ccbar   = on");
     pythia.readString("HardQCD:qqbar2ccbar= on");
@@ -218,9 +218,9 @@ int main(int argc, char* argv[]) {
 
         if (storeK.size() < 1 || storePi.size() < 4 || tau1Cand.size() < 1) {continue;}
 
-        std::cout << "Number of Kaons per event: " << storeK.size() << std::endl;
-        std::cout << "Number of Pions per event: " << storePi.size() << std::endl;
-        std::cout << "Number of Muons per event: " << tau1Cand.size() << std::endl;
+        //std::cout << "Number of Kaons per event: " << storeK.size() << std::endl;
+        //std::cout << "Number of Pions per event: " << storePi.size() << std::endl;
+        //std::cout << "Number of Muons per event: " << tau1Cand.size() << std::endl;
 
 
         // Proximity-based K* candidates (but capped to the best kMaxKstarCands by distance)
@@ -241,7 +241,7 @@ int main(int argc, char* argv[]) {
           });
         if (kstarCands.size() > kMaxKstarCands)
             kstarCands.resize(kMaxKstarCands);
-        std::cout << "number of Kstar candidates: " << kstarCands.size() << std::endl;
+        //std::cout << "number of Kstar candidates: " << kstarCands.size() << std::endl;
 
         // Proximity-based 3-prong (tau3) candidates, but only among each pion's kNearestM neighbours
         std::vector<std::array<Particle,3>> tau3Cands;
@@ -276,7 +276,7 @@ int main(int argc, char* argv[]) {
             }
         }
         if (tau3Cands.empty()) continue;  // no nearby 3-pion triplets
-        std::cout << "number of tau3 candidates: " << tau3Cands.size() << std::endl;
+        //std::cout << "number of tau3 candidates: " << tau3Cands.size() << std::endl;
 
         // Find best combination by minimal composite proximity
         double bestMetric=1e9;
@@ -354,9 +354,9 @@ int main(int argc, char* argv[]) {
         std::normal_distribution<double> smearPt_t3(t3.Pt(), sigma_pt_t3);
         tau3_pt  = smearPt_t3(rng); tau3_eta = t3.Eta(); tau3_phi = t3.Phi(); m_tau3 = t3.M();
 
-        std::cout << "kst_eta: " << kst_eta << std::endl;
-        std::cout << "tau1_eta: " << tau1_eta << std::endl;
-        std::cout << "tau3_eta: " << tau3_eta << std::endl;
+        //std::cout << "kst_eta: " << kst_eta << std::endl;
+        //std::cout << "tau1_eta: " << tau1_eta << std::endl;
+        //std::cout << "tau3_eta: " << tau3_eta << std::endl;
 
         tree.Fill();
     }
