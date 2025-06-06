@@ -51,11 +51,70 @@ inline double transverseMass(const TLorentzVector& visSum, const TVector2& metVe
   return (mT2 > 0 ? std::sqrt(mT2) : 0.0); // ? operator: (condition ? ifTrue : ifFalse)
 }
 
+struct Track {
+  TVector3 origin;
+  TVector3 direction;
+};
+
+// Chi2 function: sum of squared perpendicular distances to each track
+class VertexChi2Functor {
+public:
+  VertexChi2Functor(const std::vector<Track>& tracks, double sigma)
+    : fTracks(tracks), fSigma2(sigma * sigma) {}
+
+  double operator()(const double* x) const {
+    TVector3 V(x[0], x[1], x[2]);
+    double chi2 = 0.0;
+    for (const auto& t : fTracks) {
+      TVector3 diff = V - t.origin;
+      TVector3 perp = diff - diff.Dot(t.direction) * t.direction;
+      chi2 += perp.Mag2() / fSigma2;
+    }
+    return chi2;
+  }
+
+private:
+  const std::vector<Track>& fTracks;
+  double fSigma2;
+};
+
+// Function to perform simplified vertex fit
+bool FitVertex(const std::vector<Track>& tracks, double sigma, TVector3& fittedVertex, Float_t& chi2Out) {
+  if (tracks.size() < 2) return false;
+
+  // --- build a “composite” seed from the track origins, average starting point of tracks ---
+  TVector3 seed(0,0,0);
+  for (auto& t : tracks) seed += t.origin;
+  seed *= (1.0 / tracks.size());
+
+  ROOT::Math::Functor functor(VertexChi2Functor(tracks, sigma), 3);
+  auto minimizer = std::unique_ptr<ROOT::Math::Minimizer>(
+    ROOT::Math::Factory::CreateMinimizer("Minuit2", "Migrad"));
+
+  minimizer->SetFunction(functor);
+  minimizer->SetMaxFunctionCalls(200);
+  minimizer->SetMaxIterations(500);
+  minimizer->SetTolerance(1e-4);
+
+  // Set initial guess (e.g. origin)
+  minimizer->SetVariable(0, "x", seed.X(), 0.1);
+  minimizer->SetVariable(1, "y", seed.Y(), 0.1);
+  minimizer->SetVariable(2, "z", seed.Z(), 0.1);
+
+  bool success = minimizer->Minimize();
+  if (!success) return false;
+
+  const double* xs = minimizer->X();
+  fittedVertex.SetXYZ(xs[0], xs[1], xs[2]);
+  chi2Out = minimizer->MinValue();
+  return true;
+}
+
 using namespace Pythia8;
 
 int main(int argc, char* argv[]) {
   // Number of events (default 100k if not passed)
-  int nEvents = 5000;
+  int nEvents = 15000;
   if (argc > 1) nEvents = atoi(argv[1]);
 
   // Configure Pythia for pp collisions @ 13 TeV, b-quark production
@@ -63,7 +122,7 @@ int main(int argc, char* argv[]) {
 
   pythia.readString("Beams:idA = 2212");           // proton
   pythia.readString("Beams:idB = 2212");           // proton
-  pythia.readString("Beams:eCM = 13000.");         // 13 TeV
+  pythia.readString("Beams:eCM = 13600.");         // 13 TeV
   pythia.readString("Random:seed = 22");           // set seed
   pythia.readString("HardQCD:gg2bbbar = on");      // turn on gg->bb
   pythia.readString("HardQCD:qqbar2bbbar = on");   // turn on qqbar->bb
@@ -155,6 +214,7 @@ int main(int argc, char* argv[]) {
   Float_t tauMinus_pt, tauMinus_eta, tauMinus_phi;
   Float_t m_tauMinus, m_tauPlus, m_kst;
   Float_t mT_tautau, m_tautau_coll;
+  Float_t B0_t;
 
 
   tree.Branch("kst_pt", &kst_pt, "kst_pt/F");
@@ -171,11 +231,12 @@ int main(int argc, char* argv[]) {
   tree.Branch("m_kst", &m_kst, "m_kst/F");
   tree.Branch("mT_tautau", &mT_tautau, "mT_tautau/F");
   tree.Branch("m_tautau_coll", &m_tautau_coll, "m_tautau_coll/F");
+  tree.Branch("B0_t", &B0_t, "B0_t/F");
 
   // Random number generators for measurement smearing and uncertainties
   std::mt19937 rng(42);
   std::normal_distribution<double> smearSVxy(0.0, 0.01);    // mm (SV spatial resolution)
-  std::normal_distribution<double> smearSVz(0.0, 0.01);      // mm
+  std::normal_distribution<double> smearSVz(0.0, 0.025);      // mm
   std::chi_squared_distribution<double> chi2Dist(9);   // chi2 with n DOF
 
 
@@ -200,8 +261,10 @@ int main(int argc, char* argv[]) {
         PVx = p.xProd();
         PVy = p.yProd();
         PVz = p.zProd();
+        /*
         // Compute B0 secondary vertex via decay length
         double properCTau  = p.tau();
+        B0_t = properCTau;
         double betaGamma   = p.pAbs() / p.m();
         double decayLength = properCTau * betaGamma;
 
@@ -232,7 +295,7 @@ int main(int argc, char* argv[]) {
         SVzErr = smearSVz.stddev();
         double chi2 = chi2Dist(rng);
         double chi2ndf = chi2 / 9.0;  // Since DOF = n
-        vertexChi2 = chi2ndf;
+        vertexChi2 = chi2ndf;*/
 
         // ─── Hand this B0 to EvtGen ────────────────────────────
         //   Create an EvtGen “particle” from the Pythia entry:
@@ -293,9 +356,9 @@ int main(int argc, char* argv[]) {
             else if (pdg == 211)     ++nPion;
           }
           // exactly one muon => muonic decay
-          if (nMuon == 1 && leaves.size() >= 2) return "MU";
+          if (nMuon == 1 /*&& leaves.size() >= 2*/) return "MU";
           // exactly three charged pions => 3π decay
-          if (nPion == 3 && leaves.size() == 4) return "3P";
+          if (nPion == 3 /*&& leaves.size() == 4*/) return "3P";
           return "OTHER";
         };
 
@@ -319,7 +382,7 @@ int main(int argc, char* argv[]) {
           std::vector<TLorentzVector> visTracks;
           for(auto dau : leaves){
             int pdg = EvtPDL::getStdHep(dau->getId());
-            std::cout << "[DEBUG]   leaf PDG="<<pdg<<"\n";
+            //std::cout << "[DEBUG]   leaf PDG="<<pdg<<"\n";
             if (std::abs(pdg)==12 || std::abs(pdg)==14 || std::abs(pdg)==16) continue;
             auto p4 = dau->getP4Lab();
             TLorentzVector v(p4.get(1), p4.get(2), p4.get(3), p4.get(0));
@@ -351,7 +414,7 @@ int main(int argc, char* argv[]) {
         tauPlus_eta = tauPvisSum.Eta();
         tauPlus_phi = tauPvisSum.Phi();
         m_tauPlus = tauPvisSum.M();
-        std::cout << "[DEBUG] mass of Tau Plus: " << m_tauPlus << "\n";
+        //std::cout << "[DEBUG] mass of Tau Plus: " << m_tauPlus << "\n";
 
         // …and for the τ‑ branch:
         double sigma_pt_tauM = tauMvisSum.Pt() * sigma_pt_rel;
@@ -360,8 +423,33 @@ int main(int argc, char* argv[]) {
         tauMinus_eta = tauMvisSum.Eta();
         tauMinus_phi = tauMvisSum.Phi();
         m_tauMinus = tauMvisSum.M();
-        std::cout << "[DEBUG] mass of Tau Minus: " << m_tauMinus << "\n";
+        //std::cout << "[DEBUG] mass of Tau Minus: " << m_tauMinus << "\n";
 
+        // fit vertex of reconstructed Kstar and tau tracks
+        std::vector<Track> tracks;
+        auto makeTrack = [&](const TLorentzVector& p4, const EvtParticle* particle) {
+          // Use the particle's production vertex
+          EvtVector4R v4 = particle->get4Pos();
+          TVector3 origin(v4.get(1), v4.get(2), v4.get(3));
+          // (Optional) smear by detector resolution:
+          origin += TVector3(smearSVxy(rng), smearSVxy(rng), smearSVz(rng));
+          TVector3 dir = p4.Vect().Unit();
+          tracks.push_back(Track{origin, dir});
+        };
+        makeTrack(kstarReco, kstar);
+        makeTrack(tauPvisSum, tauP);
+        makeTrack(tauMvisSum, tauM);
+        TVector3 vtx;
+        float chi2;
+        if (!FitVertex(tracks, 0.1, vtx, chi2)) continue;
+
+        //int ndof = static_cast<int>(tracks.size())*2 - 3;     // 2 constraints per track minus 3 free coords
+        //float chi2ndf = chi2 / ndof;
+        SVx        = vtx.X();
+        SVy        = vtx.Y();
+        SVz        = vtx.Z();
+        vertexChi2 = chi2;
+        std::cout << "[CHECK] Vertex Chi2 value: " << chi2 << std::endl;
 
         tree.Fill();
 

@@ -1,3 +1,4 @@
+yesPhotos
 Decay B0
     0.5 D- tau+ nu_tau ISGW2;
     0.5 D*- tau+ nu_tau ISGW2;
@@ -12,7 +13,7 @@ Enddecay
 CDecay tau-
 
 Decay D-
-    1.0 K*0 mu- anti-nu_mu  PHSP;
+    1.0 K*0 mu- anti-nu_mu  ISGW2;
 Enddecay
 
 CDecay D+

@@ -83,8 +83,8 @@ inline TVector3 CompositeVertex(const std::vector<Pythia8::Particle>& parts) {
 inline double VertexDistance(const TVector3& a, const TVector3& b) { return (a-b).Mag(); }
 
 // Define your distance threshold (in mm) for proximity filtering
-const double kProximityThreshold = 0.1;
-const size_t kMaxKstarCands = 50;  // cap Kπ pairs to top 50
+const double kProximityThreshold = 1.0; // mm
+const size_t kMaxKstarCands = 10;  // cap Kπ pairs to top 50
 const size_t kNearestM      = 5;   // only use 5 nearest neighbours for triplets
 
 // Helper to compute 3D distance between two production vertices
@@ -105,7 +105,7 @@ int main(int argc, char* argv[]) {
     Pythia pythia;
     pythia.readString("Beams:idA = 2212");           // proton
     pythia.readString("Beams:idB = 2212");
-    pythia.readString("Beams:eCM = 13000.");            // e.g. 13 TeV
+    pythia.readString("Beams:eCM = 13600.");            // e.g. 13 TeV
     pythia.readString("Random:seed = 22");           // set seed
     pythia.readString("PhaseSpace:pTHatMin = 5");
     pythia.readString("HardQCD:all = off");
@@ -113,12 +113,12 @@ int main(int argc, char* argv[]) {
     pythia.readString("HardQCD:qqbar2ccbar= on");
     pythia.readString("HardQCD:gg2bbbar   = on");
     pythia.readString("HardQCD:qqbar2bbbar= on");
-    pythia.readString("211:mayDecay = off");        // pions
+    /*pythia.readString("211:mayDecay = off");        // pions
     pythia.readString("-211:mayDecay = off");
     pythia.readString("321:mayDecay = off");        // kaons
     pythia.readString("-321:mayDecay = off");
     pythia.readString("13:mayDecay = off");        // muons
-    pythia.readString("-13:mayDecay = off");
+    pythia.readString("-13:mayDecay = off");*/
 
 
     // Vertex smearing for primary vertex (Gaussian)
@@ -146,6 +146,7 @@ int main(int argc, char* argv[]) {
     Float_t SVx, SVy, SVz;
     Float_t SVxErr = 0.005, SVyErr = 0.005, SVzErr = 0.01; // example SV smearing
     Float_t vertexChi2;
+    Float_t B0_t;
 
     // Fill TTree branches
     tree.Branch("PVx", &PVx, "PVx/F");
@@ -173,11 +174,12 @@ int main(int argc, char* argv[]) {
     tree.Branch("m_tau3", &m_tau3, "m_tau3/F");
     tree.Branch("m_tau1", &m_tau1, "m_tau1/F");
     tree.Branch("m_kst", &m_kst, "m_kst/F");
+    tree.Branch("B0_t", &B0_t, "B0_t/F");
 
     // Random number generators for measurement smearing and uncertainties
     std::mt19937 rng(40);
-    std::normal_distribution<double> smearSVxy(0.01);    // mm (SV spatial resolution)
-    std::normal_distribution<double> smearSVz(0.01);      // mm
+    std::normal_distribution<double> smearSVxy(0, 0.01);    // mm (SV spatial resolution)
+    std::normal_distribution<double> smearSVz(0, 0.025);      // mm
 
     std::vector<Particle>    storeK;      // K± for K*
     std::vector<Particle>    storePi;     // π± for K* and 3-prong
@@ -227,7 +229,9 @@ int main(int argc, char* argv[]) {
         std::vector<std::pair<Particle, Particle>> kstarCands;
         for (auto& k : storeK) {
             for (auto& pi : storePi) {
-                if (VertexDistance(k, pi) < kProximityThreshold)
+                Vec4 sum = k.p() + pi.p();
+                double mInv = sum.mCalc();
+                if ((VertexDistance(k, pi) < kProximityThreshold) && mInv < 1.5 /*GeV*/)
                     kstarCands.emplace_back(k, pi);
             }
         }
@@ -268,9 +272,13 @@ int main(int argc, char* argv[]) {
                     size_t i2 = nearest[i1][idx2];
                     for (size_t idx3 = idx2 + 1; idx3 < nearest[i1].size(); ++idx3) {
                         size_t i3 = nearest[i1][idx3];
-                        tau3Cands.push_back({ prongs[i1],
+                        Vec4 sum = prongs[i1].p() + prongs[i2].p() + prongs[i3].p();
+                        double mInv = sum.mCalc();
+                        if (mInv < 1.9 /*GeV*/) {
+                            tau3Cands.push_back({ prongs[i1],
                                               prongs[i2],
                                               prongs[i3] });
+                        }
                     }
                 }
             }
@@ -309,29 +317,32 @@ int main(int argc, char* argv[]) {
         };
         TLorentzVector vK(bestK.px(), bestK.py(), bestK.pz(), bestK.e());
         TLorentzVector vPi(bestPi.px(),bestPi.py(),bestPi.pz(),bestPi.e());
-        makeTrack(vK, bestK);
-        makeTrack(vPi, bestPi);
+        TLorentzVector vKst = vK + vPi;
+        makeTrack(vKst, bestK);
         TLorentzVector vMu(bestMu.px(),bestMu.py(),bestMu.pz(),bestMu.e());
         makeTrack(vMu, bestMu);
+        /*
         for (auto& p : bestTrip) {
             TLorentzVector v(p.px(),p.py(),p.pz(),p.e());
             makeTrack(v, p);
-        }
+        }*/
         TLorentzVector vA(bestTrip[0].px(), bestTrip[0].py(), bestTrip[0].pz(), bestTrip[0].e());
         TLorentzVector vB(bestTrip[1].px(), bestTrip[1].py(), bestTrip[1].pz(), bestTrip[1].e());
         TLorentzVector vC(bestTrip[2].px(), bestTrip[2].py(), bestTrip[2].pz(), bestTrip[2].e());
+        makeTrack(vA + vB + vC, bestTrip[0]);
 
 
         TVector3 vtx;
         float chi2;
-        if (!FitVertex(tracks, 0.6, vtx, chi2)) continue;
+        if (!FitVertex(tracks, 0.1, vtx, chi2)) continue;
 
-        int ndof = static_cast<int>(tracks.size())*2 - 3;     // 2 constraints per track minus 3 free coords
-        float chi2ndf = chi2 / ndof;
+        //int ndof = static_cast<int>(tracks.size())*2 - 3;     // 2 constraints per track minus 3 free coords
+        //float chi2ndf = chi2 / ndof;
         SVx        = vtx.X();
         SVy        = vtx.Y();
         SVz        = vtx.Z();
-        vertexChi2 = chi2ndf;
+        vertexChi2 = chi2;
+        // std::cout << "[DEBUG] Vertex chi2: " << vertexChi2 << std::endl;
 
         // relative pt error for low pt << 100GeV
         double sigma_pt_rel = 0.007;
@@ -345,14 +356,17 @@ int main(int argc, char* argv[]) {
         double sigma_pt_Kst = kstar.Pt() * sigma_pt_rel;
         std::normal_distribution<double> smearPt_Kst(kstar.Pt(), sigma_pt_Kst);
         kst_pt  = smearPt_Kst(rng); kst_eta = kstar.Eta(); kst_phi = kstar.Phi(); m_kst = kstar.M();
+        //std::cout << "[CHECK] Mass of kstar" << m_kst << std::endl;
         TLorentzVector tau1 = vMu;
         double sigma_pt_tau1 = tau1.Pt() * sigma_pt_rel;
         std::normal_distribution<double> smearPt_tau1(tau1.Pt(), sigma_pt_tau1);
         tau1_pt  = smearPt_tau1(rng); tau1_eta = tau1.Eta(); tau1_phi = tau1.Phi(); m_tau1 = tau1.M();
+        //std::cout << "[CHECK] Mass of tau1" << m_tau1 << std::endl;
         TLorentzVector t3 = vA+vB+vC;
         double sigma_pt_t3 = t3.Pt() * sigma_pt_rel;
         std::normal_distribution<double> smearPt_t3(t3.Pt(), sigma_pt_t3);
         tau3_pt  = smearPt_t3(rng); tau3_eta = t3.Eta(); tau3_phi = t3.Phi(); m_tau3 = t3.M();
+        //std::cout << "[CHECK] Mass of tau3" << m_tau3 << std::endl;
 
         //std::cout << "kst_eta: " << kst_eta << std::endl;
         //std::cout << "tau1_eta: " << tau1_eta << std::endl;
