@@ -229,6 +229,7 @@ int main(int argc, char* argv[]) {
         std::vector<std::pair<Particle, Particle>> kstarCands;
         for (auto& k : storeK) {
             for (auto& pi : storePi) {
+                if (k.charge() * pi.charge() >= 0) continue; //charge filter
                 Vec4 sum = k.p() + pi.p();
                 double mInv = sum.mCalc();
                 if ((VertexDistance(k, pi) < kProximityThreshold) && mInv < 1.5 /*GeV*/)
@@ -275,6 +276,8 @@ int main(int argc, char* argv[]) {
                         Vec4 sum = prongs[i1].p() + prongs[i2].p() + prongs[i3].p();
                         double mInv = sum.mCalc();
                         if (mInv < 1.9 /*GeV*/) {
+                            double q = prongs[i1].charge() + prongs[i2].charge() + prongs[i3].charge();
+                            if (std::abs(q) != 1) continue;
                             tau3Cands.push_back({ prongs[i1],
                                               prongs[i2],
                                               prongs[i3] });
@@ -294,7 +297,9 @@ int main(int argc, char* argv[]) {
             TVector3 vKst=CompositeVertex({kp.first,kp.second});
             for(auto& trip:tau3Cands){
                 TVector3 vT3=CompositeVertex({trip[0],trip[1],trip[2]});
+                double q3 = trip[0].charge() + trip[1].charge() + trip[2].charge(); //charge check of triple
                 for(auto& mu:tau1Cand){
+                    if (q3 + mu.charge() != 0) continue; //charge net 0 filter
                     TVector3 vT1(mu.xProd(),mu.yProd(),mu.zProd());
                     // metric: max distance between composite vertices
                     double d1=VertexDistance(vKst,vT3), d2=VertexDistance(vKst,vT1), d3=VertexDistance(vT3,vT1);
@@ -305,31 +310,56 @@ int main(int argc, char* argv[]) {
         }
         if(bestMetric>kProximityThreshold) continue;
 
+        //do vertex fit on three ideal pions
+        std::vector<Track> tau3Tracks;
+            for (auto& p : bestTrip) {
+                TLorentzVector v(p.px(), p.py(), p.pz(), p.e());
+                TVector3 orig(p.xProd(), p.yProd(), p.zProd());
+                TVector3 dir = v.Vect().Unit();
+                tau3Tracks.push_back({orig, dir});
+            }
+        TVector3 vtx_tau3;
+        Float_t chi2_tau3;
+        if (!FitVertex(tau3Tracks, 0.1, vtx_tau3, chi2_tau3)) continue;
+
+        //do vertex fit on the pion kaon pair
+        std::vector<Track> kstTracks;
+        {
+            TLorentzVector vK(bestK.px(), bestK.py(), bestK.pz(), bestK.e());
+            TVector3 origK(bestK.xProd(), bestK.yProd(), bestK.zProd());
+            kstTracks.push_back({origK, vK.Vect().Unit()});
+
+            TLorentzVector vPi(bestPi.px(), bestPi.py(), bestPi.pz(), bestPi.e());
+            TVector3 origPi(bestPi.xProd(), bestPi.yProd(), bestPi.zProd());
+            kstTracks.push_back({origPi, vPi.Vect().Unit()});
+        }
+        TVector3 vtx_kst;
+        Float_t chi2_kst;
+        if (!FitVertex(kstTracks, 0.1, vtx_kst, chi2_kst)) continue;
+
         // Perform vertex fit on all 6 charged tracks (2 from K*, 1 muon, 3 pions), simplyfied version
         std::vector<Track> tracks;
         auto makeTrack = [&](const TLorentzVector& p4, const Particle& p) {
-            // Use the particle's production vertex instead of the PV
-            TVector3 origin(p.xProd(), p.yProd(), p.zProd());
-            // (Optional) smear by detector resolution:
-            origin += TVector3(smearSVxy(rng), smearSVxy(rng), smearSVz(rng));
+            TVector3 origin(p.xProd(), p.yProd(), p.zProd()); // particle vertex
+            origin += TVector3(smearSVxy(rng), smearSVxy(rng), smearSVz(rng)); // smear origin
             TVector3 dir = p4.Vect().Unit();
             tracks.push_back(Track{origin, dir});
         };
+        auto makeCompositeTrack = [&](const TLorentzVector& p4, const TVector3& vtxFit) {
+            TVector3 smeared = vtxFit + TVector3(smearSVxy(rng), smearSVxy(rng), smearSVz(rng));
+            tracks.push_back({smeared, p4.Vect().Unit()});
+        };
+
         TLorentzVector vK(bestK.px(), bestK.py(), bestK.pz(), bestK.e());
         TLorentzVector vPi(bestPi.px(),bestPi.py(),bestPi.pz(),bestPi.e());
         TLorentzVector vKst = vK + vPi;
-        makeTrack(vKst, bestK);
+        makeCompositeTrack(vKst, vtx_kst);
         TLorentzVector vMu(bestMu.px(),bestMu.py(),bestMu.pz(),bestMu.e());
         makeTrack(vMu, bestMu);
-        /*
-        for (auto& p : bestTrip) {
-            TLorentzVector v(p.px(),p.py(),p.pz(),p.e());
-            makeTrack(v, p);
-        }*/
         TLorentzVector vA(bestTrip[0].px(), bestTrip[0].py(), bestTrip[0].pz(), bestTrip[0].e());
         TLorentzVector vB(bestTrip[1].px(), bestTrip[1].py(), bestTrip[1].pz(), bestTrip[1].e());
         TLorentzVector vC(bestTrip[2].px(), bestTrip[2].py(), bestTrip[2].pz(), bestTrip[2].e());
-        makeTrack(vA + vB + vC, bestTrip[0]);
+        makeCompositeTrack(vA + vB + vC, vtx_tau3);
 
 
         TVector3 vtx;
