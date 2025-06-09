@@ -80,7 +80,7 @@ using namespace Pythia8;
 
 int main(int argc, char* argv[]) {
   // Number of events
-  int nEvents = 3000;
+  int nEvents = 10000;
   if (argc > 1) nEvents = atoi(argv[1]);
 
   // 1) Configure Pythia

@@ -114,7 +114,7 @@ using namespace Pythia8;
 
 int main(int argc, char* argv[]) {
   // Number of events (default 100k if not passed)
-  int nEvents = 15000;
+  int nEvents = 40000;
   if (argc > 1) nEvents = atoi(argv[1]);
 
   // Configure Pythia for pp collisions @ 13 TeV, b-quark production

@@ -98,7 +98,7 @@ inline double VertexDistance(const Pythia8::Particle& a, const Pythia8::Particle
 using namespace Pythia8;
 
 int main(int argc, char* argv[]) {
-    int nEvents = 50000;
+    int nEvents = 70000;
     if (argc > 1) nEvents = atoi(argv[1]);
 
     // Configure Pythia for pp collisions @ 13 TeV
