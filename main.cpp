@@ -114,7 +114,7 @@ using namespace Pythia8;
 
 int main(int argc, char* argv[]) {
   // Number of events (default 100k if not passed)
-  int nEvents = 40000;
+  int nEvents = 100000;
   if (argc > 1) nEvents = atoi(argv[1]);
 
   // Configure Pythia for pp collisions @ 13 TeV, b-quark production
@@ -132,7 +132,7 @@ int main(int argc, char* argv[]) {
   pythia.readString("Beams:allowVertexSpread = on");
   pythia.readString("Beams:sigmaVertexX = 0.01");         // mm (PV resolution)
   pythia.readString("Beams:sigmaVertexY = 0.01");         // mm
-  pythia.readString("Beams:sigmaVertexZ = 0.025");         // mm
+  pythia.readString("Beams:sigmaVertexZ = 0.035");         // mm
 
   // Keep B0 mesons stable (will decay later via EvtGen)
   pythia.readString("ParticleDecays:limitTau0 = on"); // limit very short lifetimes
@@ -176,6 +176,8 @@ int main(int argc, char* argv[]) {
 
   // Kinematics
   Float_t ptB, etaB, phiB;
+  Float_t mu_pt, mu_eta, mu_phi;
+  Float_t mu_x, mu_y, mu_z;
   // Primary vertex (PV) from Pythia, smeared
   Float_t PVx, PVy, PVz;
   // PV uncertainties (mm)
@@ -189,7 +191,7 @@ int main(int argc, char* argv[]) {
   // PV uncertainties from vertex smearing parameters
   PVxErr = 0.01;  // mm (sigmaX)
   PVyErr = 0.01;  // mm (sigmaY)
-  PVzErr = 0.025;  // mm (sigmaZ)
+  PVzErr = 0.035;  // mm (sigmaZ)
 
   tree.Branch("ptB",       &ptB,       "ptB/F");
   tree.Branch("etaB",      &etaB,      "etaB/F");
@@ -207,6 +209,12 @@ int main(int argc, char* argv[]) {
   tree.Branch("SVyErr",    &SVyErr,    "SVyErr/F");
   tree.Branch("SVzErr",    &SVzErr,    "SVzErr/F");
   tree.Branch("vertexChi2", &vertexChi2, "vertexChi2/F");
+  tree.Branch("mu_pt",  &mu_pt,  "mu_pt/F");
+  tree.Branch("mu_eta", &mu_eta, "mu_eta/F");
+  tree.Branch("mu_phi", &mu_phi, "mu_phi/F");
+  tree.Branch("mu_x",  &mu_x,  "mu_x/F");
+  tree.Branch("mu_y",  &mu_y,  "mu_y/F");
+  tree.Branch("mu_z",  &mu_z,  "mu_z/F");
 
   // Single-entry daughter kinematics
   Float_t kst_pt, kst_eta, kst_phi;
@@ -232,18 +240,26 @@ int main(int argc, char* argv[]) {
   tree.Branch("mT_tautau", &mT_tautau, "mT_tautau/F");
   tree.Branch("m_tautau_coll", &m_tautau_coll, "m_tautau_coll/F");
   tree.Branch("B0_t", &B0_t, "B0_t/F");
+  Float_t IP_mu;
+  tree.Branch("IP_mu", &IP_mu, "IP_mu/F");
+
 
   // Random number generators for measurement smearing and uncertainties
   std::mt19937 rng(42);
   std::normal_distribution<double> smearSVxy(0.0, 0.01);    // mm (SV spatial resolution)
-  std::normal_distribution<double> smearSVz(0.0, 0.025);      // mm
+  std::normal_distribution<double> smearSVz(0.0, 0.035);      // mm
   std::chi_squared_distribution<double> chi2Dist(9);   // chi2 with n DOF
 
-
+  //stop when reaching goal of events
+  int passed = 0;
+  int generated = 0;
+  const int targetPassed = 8000;
+  bool done = false;
 
   // Event loop: find all B0 in the event record
-  for (int iEvent = 0; iEvent < nEvents; ++iEvent) {
+  for (int iEvent = 0; iEvent < nEvents && !done; ++iEvent) {
     if (!pythia.next()) continue;
+    ++generated;
 
     for (int i = 0; i < pythia.event.size(); ++i) {
       const Particle& p = pythia.event[i];
@@ -261,41 +277,6 @@ int main(int argc, char* argv[]) {
         PVx = p.xProd();
         PVy = p.yProd();
         PVz = p.zProd();
-        /*
-        // Compute B0 secondary vertex via decay length
-        double properCTau  = p.tau();
-        B0_t = properCTau;
-        double betaGamma   = p.pAbs() / p.m();
-        double decayLength = properCTau * betaGamma;
-
-        // Get the B0’s momentum components
-        double px   = p.px();
-        double py   = p.py();
-        double pz   = p.pz();
-
-        // Compute the magnitude of the B0 3‑momentum
-        double pMag = std::sqrt(px*px + py*py + pz*pz);
-
-        // Build the unit direction vector of B0
-        double dirX = px / pMag;
-        double dirY = py / pMag;
-        double dirZ = pz / pMag;
-
-        double SVx_true = PVx + dirX * decayLength;
-        double SVy_true = PVy + dirY * decayLength;
-        double SVz_true = PVz + dirZ * decayLength;
-
-        // 5.d) Measurement smearing of SV
-        SVx = SVx_true + smearSVxy(rng);
-        SVy = SVy_true + smearSVxy(rng);
-        SVz = SVz_true + smearSVz(rng);
-        // 5.e) Assign uncertainties and chi2
-        SVxErr = smearSVxy.stddev();
-        SVyErr = smearSVxy.stddev();
-        SVzErr = smearSVz.stddev();
-        double chi2 = chi2Dist(rng);
-        double chi2ndf = chi2 / 9.0;  // Since DOF = n
-        vertexChi2 = chi2ndf;*/
 
         // ─── Hand this B0 to EvtGen ────────────────────────────
         //   Create an EvtGen “particle” from the Pythia entry:
@@ -316,10 +297,10 @@ int main(int argc, char* argv[]) {
           else if (id == EvtPDL::getId("tau-" )    ) tauM  = d;
         }
 
-        std::cout << "[DEBUG] Found branches:"
+        /*std::cout << "[DEBUG] Found branches:"
           << " K*0="<<(kstar? "yes":"NO")
           << " tau+="<<(tauP? "yes":"NO")
-          << " tau-="<<(tauM? "yes":"NO")<<"\n";
+          << " tau-="<<(tauM? "yes":"NO")<<"\n";*/
         if (!kstar || !tauP || !tauM) {
           std::cerr << "[WARN] incomplete B→K*ττ decay, skipping this event\n";
           delete evtB;
@@ -365,16 +346,49 @@ int main(int argc, char* argv[]) {
         std::string typeP = classifyTau(tauPLeaves);
         std::string typeM = classifyTau(tauMLeaves);
 
-        std::cout << "[DEBUG] τ+ decay = " << typeP
-                  << ", τ- decay = " << typeM << "\n";
+        //std::cout << "[DEBUG] τ+ decay = " << typeP << ", τ- decay = " << typeM << "\n";
 
         // require exactly one MU and one 3P
         if (!((typeP=="MU" && typeM=="3P") ||
               (typeP=="3P"&& typeM=="MU")) ){
-          std::cout<<"[INFO] skipping event: not μ+3π\n";
+          //std::cout<<"[INFO] skipping event: not μ+3π\n";
           delete evtB;
           continue;
               }
+
+        // find muon leaf and collect the muon
+        const auto& muLeaves = (typeP=="MU" ? tauPLeaves : tauMLeaves);
+
+        EvtParticle* muPart = nullptr;
+        for (auto p : muLeaves) {
+          if ( std::abs(EvtPDL::getStdHep(p->getId())) == 13 ) {
+            muPart = p;
+            break;
+          }
+        }
+        // save muon kinematics and prod origin
+        if (muPart) {
+          EvtVector4R pos = muPart->get4Pos();
+          mu_x = pos.get(1) + smearSVxy(rng);
+          mu_y = pos.get(2) + smearSVxy(rng);
+          mu_z = pos.get(3) + smearSVz(rng);
+          EvtVector4R p4 = muPart->getP4Lab();
+          TLorentzVector mu4(p4.get(1), p4.get(2), p4.get(3), p4.get(0));
+          mu_pt  = mu4.Pt();
+          mu_eta = mu4.Eta();
+          mu_phi = mu4.Phi();
+          // 3D impact parameter = | (muOrig – PV) × muDir |
+          TVector3 PV(PVx, PVy, PVz);
+          TVector3 muOrig(mu_x, mu_y, mu_z);
+          TVector3 muDir = mu4.Vect().Unit();
+          TVector3 d3 = muOrig - PV;
+          IP_mu = d3.Cross(muDir).Mag();
+        } else {
+          mu_pt = mu_eta = mu_phi = -999.;
+          mu_x = mu_y = mu_z = -999.;
+          IP_mu = -999.;
+        }
+
 
         // define a little helper to sum and collect only non‑neutrino four‑vectors:
         auto sumVisible = [&](const std::vector<EvtParticle*>& leaves) -> std::pair<TLorentzVector, std::vector<TLorentzVector>>{
@@ -396,7 +410,22 @@ int main(int argc, char* argv[]) {
         double sigma_pt_rel = 0.007;
 
         // build your reco‑K* vector and fill:
-        TLorentzVector kstarReco = sumVisible(kstarLeaves).first;
+        //TLorentzVector kstarReco = sumVisible(kstarLeaves).first;
+        // build reco-vectors and grab visible tracks
+        auto [kstarReco, kstarVis] = sumVisible(kstarLeaves);
+        auto [tauMvisSum, tauMvis] = sumVisible(tauMLeaves);
+        auto [tauPvisSum, tauPvis] = sumVisible(tauPLeaves);
+
+        // require all visible tracks in CMS acceptance, eta cut
+        bool allInEta = true;
+        for (auto &v : kstarVis) if (std::abs(v.Eta()) > 2.5) { allInEta=false; break; }
+        for (auto &v : tauPvis)   if (allInEta && std::abs(v.Eta()) > 2.5) { allInEta=false; break; }
+        for (auto &v : tauMvis)    if (allInEta && std::abs(v.Eta()) > 2.5) { allInEta=false; break; }
+        if (!allInEta) {
+          delete evtB;
+          continue;
+        }
+
         double sigma_pt_Kst = kstarReco.Pt() * sigma_pt_rel;
         std::normal_distribution<double> smearPt_Kst(kstarReco.Pt(), sigma_pt_Kst);
         kst_pt  = smearPt_Kst(rng);
@@ -405,8 +434,8 @@ int main(int argc, char* argv[]) {
         m_kst = kstarReco.M();
 
         // same for the tau branches
-        TLorentzVector tauMvisSum = sumVisible(tauMLeaves).first;
-        TLorentzVector tauPvisSum = sumVisible(tauPLeaves).first;
+        //TLorentzVector tauMvisSum = sumVisible(tauMLeaves).first;
+        //TLorentzVector tauPvisSum = sumVisible(tauPLeaves).first;
 
         double sigma_pt_tauP = tauPvisSum.Pt() * sigma_pt_rel;
         std::normal_distribution<double> smearPt_tauP(tauPvisSum.Pt(), sigma_pt_tauP);
@@ -449,14 +478,30 @@ int main(int argc, char* argv[]) {
         SVy        = vtx.Y();
         SVz        = vtx.Z();
         vertexChi2 = chi2;
-        std::cout << "[CHECK] Vertex Chi2 value: " << chi2 << std::endl;
+        //std::cout << "[CHECK] Vertex Chi2 value: " << chi2 << std::endl;
 
         tree.Fill();
 
         // destroy the EvtGen particle to free memory:
         delete evtB;
+        ++passed;
+        if (passed >= targetPassed) {
+          std::cout
+            << "Generated " << generated
+            << " events to save " << passed
+            << " events.\n";
+          done = true;
+          break;
+        }
       }
     }
+  }
+
+  if (passed < targetPassed) {
+    std::cout
+      << "Loop ended after " << generated
+      << " generated events, but only "
+      << passed << " passed cuts.\n";
   }
 
   std::cout << "Entries in tree: " << tree.GetEntries() << "\n";

@@ -98,7 +98,7 @@ inline double VertexDistance(const Pythia8::Particle& a, const Pythia8::Particle
 using namespace Pythia8;
 
 int main(int argc, char* argv[]) {
-    int nEvents = 70000;
+    int nEvents = 1000000;
     if (argc > 1) nEvents = atoi(argv[1]);
 
     // Configure Pythia for pp collisions @ 13 TeV
@@ -125,7 +125,7 @@ int main(int argc, char* argv[]) {
     pythia.readString("Beams:allowVertexSpread = on");
     pythia.readString("Beams:sigmaVertexX = 0.01");         // mm (PV resolution)
     pythia.readString("Beams:sigmaVertexY = 0.01");         // mm
-    pythia.readString("Beams:sigmaVertexZ = 0.025");         // mm
+    pythia.readString("Beams:sigmaVertexZ = 0.035");         // mm
     pythia.readString("ParticleDecays:limitTau0 = on"); // limit very short lifetimes
 
 
@@ -137,14 +137,14 @@ int main(int argc, char* argv[]) {
     TTree tree("Events", "Random combinatorial background");
 
     Float_t PVx, PVy, PVz;
-    Float_t PVxErr = 0.01, PVyErr = 0.01, PVzErr = 0.025;
+    Float_t PVxErr = 0.01, PVyErr = 0.01, PVzErr = 0.035;
     // Kinematics placeholders
     Float_t kst_pt, kst_eta, kst_phi;
     Float_t tau1_pt, tau1_eta, tau1_phi;
     Float_t tau3_pt, tau3_eta, tau3_phi;
     Float_t m_tau1, m_tau3, m_kst;
     Float_t SVx, SVy, SVz;
-    Float_t SVxErr = 0.005, SVyErr = 0.005, SVzErr = 0.01; // example SV smearing
+    Float_t SVxErr = 0.01, SVyErr = 0.01, SVzErr = 0.035; // example SV smearing
     Float_t vertexChi2;
     Float_t B0_t;
 
@@ -175,22 +175,39 @@ int main(int argc, char* argv[]) {
     tree.Branch("m_tau1", &m_tau1, "m_tau1/F");
     tree.Branch("m_kst", &m_kst, "m_kst/F");
     tree.Branch("B0_t", &B0_t, "B0_t/F");
+    Float_t mu_pt, mu_eta, mu_phi;
+    Float_t mu_x, mu_y, mu_z;
+    tree.Branch("mu_pt",    &mu_pt,    "mu_pt/F");
+    tree.Branch("mu_eta",   &mu_eta,   "mu_eta/F");
+    tree.Branch("mu_phi",   &mu_phi,   "mu_phi/F");
+    tree.Branch("mu_x",    &mu_x,    "mu_x/F");
+    tree.Branch("mu_y",    &mu_y,    "mu_y/F");
+    tree.Branch("mu_z",    &mu_z,    "mu_z/F");
+    Float_t IP_mu;
+    tree.Branch("IP_mu", &IP_mu, "IP_mu/F");
 
     // Random number generators for measurement smearing and uncertainties
     std::mt19937 rng(40);
     std::normal_distribution<double> smearSVxy(0, 0.01);    // mm (SV spatial resolution)
-    std::normal_distribution<double> smearSVz(0, 0.025);      // mm
+    std::normal_distribution<double> smearSVz(0, 0.035);      // mm
 
     std::vector<Particle>    storeK;      // K± for K*
     std::vector<Particle>    storePi;     // π± for K* and 3-prong
     std::vector<Particle>    tau1Cand;    // muons from τ→μνν
     std::vector<Particle>    prongs;      // pions from τ→3πν
 
-    for (int iEvent = 0; iEvent < nEvents; ++iEvent) {
+    //stop when reaching goal of events
+    int passed = 0;
+    int generated = 0;
+    const int targetPassed = 8000;
+    bool done = false;
+
+    for (int iEvent = 0; iEvent < nEvents && !done; ++iEvent) {
         if (iEvent % 100 == 0) {
             std::cout << "Event" << iEvent << " and " << nEvents << "\n";
         }
         if (!pythia.next()) continue;
+        ++generated;
 
         // Clear containers at start of each event
         storeK.clear();
@@ -310,6 +327,23 @@ int main(int argc, char* argv[]) {
         }
         if(bestMetric>kProximityThreshold) continue;
 
+        // smear & save muon production vertex + kinematics
+        {
+            mu_x = bestMu.xProd() + smearSVxy(rng);
+            mu_y = bestMu.yProd() + smearSVxy(rng);
+            mu_z = bestMu.zProd() + smearSVz (rng);
+            TLorentzVector m4(bestMu.px(), bestMu.py(), bestMu.pz(), bestMu.e());
+            mu_pt  = m4.Pt();
+            mu_eta = m4.Eta();
+            mu_phi = m4.Phi();
+            // 3D impact parameter = | (muOrig – PV) × muDir |
+            TVector3 PV(PVx, PVy, PVz);
+            TVector3 muOrig(mu_x, mu_y, mu_z);
+            TVector3 muDir = m4.Vect().Unit();
+            TVector3 d3 = muOrig - PV;
+            IP_mu = d3.Cross(muDir).Mag();
+        }
+
         //do vertex fit on three ideal pions
         std::vector<Track> tau3Tracks;
             for (auto& p : bestTrip) {
@@ -361,13 +395,25 @@ int main(int argc, char* argv[]) {
         TLorentzVector vC(bestTrip[2].px(), bestTrip[2].py(), bestTrip[2].pz(), bestTrip[2].e());
         makeCompositeTrack(vA + vB + vC, vtx_tau3);
 
+        // CMS realistic eta acceptance on all visible tracks:
+        {
+            std::array<TLorentzVector,6> vis{vK,vPi,vMu,vA,vB,vC};
+            bool allInEta = true;
+            for (auto &tv : vis) {
+                if (std::abs(tv.Eta()) > 2.5) {
+                    allInEta = false;
+                    break;
+                    }
+                }
+            if (!allInEta) {
+                continue;
+                }
+        }
 
         TVector3 vtx;
         float chi2;
         if (!FitVertex(tracks, 0.1, vtx, chi2)) continue;
 
-        //int ndof = static_cast<int>(tracks.size())*2 - 3;     // 2 constraints per track minus 3 free coords
-        //float chi2ndf = chi2 / ndof;
         SVx        = vtx.X();
         SVy        = vtx.Y();
         SVz        = vtx.Z();
@@ -403,6 +449,22 @@ int main(int argc, char* argv[]) {
         //std::cout << "tau3_eta: " << tau3_eta << std::endl;
 
         tree.Fill();
+        ++passed;
+        if (passed >= targetPassed) {
+            std::cout
+              << "Generated " << generated
+              << " events to save " << passed
+              << " events.\n";
+            done = true;
+            break;
+        }
+    }
+
+    if (passed < targetPassed) {
+        std::cout
+          << "Loop ended after " << generated
+          << " generated events, but only "
+          << passed << " passed cuts.\n";
     }
 
     std::cout << "Entries in tree: " << tree.GetEntries() << "\n";

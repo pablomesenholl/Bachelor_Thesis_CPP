@@ -80,7 +80,7 @@ using namespace Pythia8;
 
 int main(int argc, char* argv[]) {
   // Number of events
-  int nEvents = 10000;
+  int nEvents = 50000;
   if (argc > 1) nEvents = atoi(argv[1]);
 
   // 1) Configure Pythia
@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
   pythia.readString("Beams:allowVertexSpread = on");
   pythia.readString("Beams:sigmaVertexX = 0.01");
   pythia.readString("Beams:sigmaVertexY = 0.01");
-  pythia.readString("Beams:sigmaVertexZ = 0.025"); //in mm
+  pythia.readString("Beams:sigmaVertexZ = 0.035"); //in mm
   pythia.readString("ParticleDecays:limitTau0 = on");
   pythia.readString("511:mayDecay = off");
   pythia.readString("-511:mayDecay = off");
@@ -132,7 +132,7 @@ int main(int argc, char* argv[]) {
   TTree tree("Events", "Simulation of Specific Backgrounds");
   // Branch definitions
   Float_t ptB, etaB, phiB;
-  Float_t PVx, PVy, PVz, PVxErr=0.01f, PVyErr=0.01f, PVzErr=0.025f;
+  Float_t PVx, PVy, PVz, PVxErr=0.01f, PVyErr=0.01f, PVzErr=0.035f;
   Float_t SVx, SVy, SVz, SVxErr, SVyErr, SVzErr, vertexChi2;
   Float_t kst_pt, kst_eta, kst_phi;
   Float_t tauPlus_pt, tauPlus_eta, tauPlus_phi;
@@ -168,15 +168,30 @@ int main(int argc, char* argv[]) {
   tree.Branch("m_tauMinus", &m_tauMinus, "m_tauMinus/F");
   tree.Branch("m_kst", &m_kst, "m_kst/F");
   tree.Branch("B0_t", &B0_t, "B0_t/F");
+  Float_t mu_pt, mu_eta, mu_phi;
+  Float_t mu_x, mu_y, mu_z;
+  tree.Branch("mu_pt",    &mu_pt,    "mu_pt/F");
+  tree.Branch("mu_eta",   &mu_eta,   "mu_eta/F");
+  tree.Branch("mu_phi",   &mu_phi,   "mu_phi/F");
+  tree.Branch("mu_x",    &mu_x,    "mu_x/F");
+  tree.Branch("mu_y",    &mu_y,    "mu_y/F");
+  tree.Branch("mu_z",    &mu_z,    "mu_z/F");
+  Float_t IP_mu;
+  tree.Branch("IP_mu", &IP_mu, "IP_mu/F");
 
   std::mt19937 rng(41);
   std::normal_distribution<double> smearSVxy(0, 0.01);
-  std::normal_distribution<double> smearSVz(0, 0.025);
-  std::chi_squared_distribution<double> chi2Dist(9);
+  std::normal_distribution<double> smearSVz(0, 0.035);
 
-  // 4) Event loop
-  for (int iEvent = 0; iEvent < nEvents; ++iEvent) {
+  //stop when reaching goal of events
+  int passed = 0;
+  int generated = 0;
+  const int targetPassed = 8000;
+  bool done = false;
+
+  for (int iEvent = 0; iEvent < nEvents && !done; ++iEvent) {
     if (!pythia.next()) continue;
+    ++generated;
     for (int i = 0; i < pythia.event.size(); ++i) {
       const Particle& p = pythia.event[i];
       if ((p.id()==511 || p.id()==-511) && p.isFinal()) {
@@ -193,40 +208,6 @@ int main(int argc, char* argv[]) {
         PVx = p.xProd();
         PVy = p.yProd();
         PVz = p.zProd();
-        // Compute B0 secondary vertex via decay length
-        double properCTau  = p.tau();
-        B0_t = properCTau;
-        double betaGamma   = p.pAbs() / p.m();
-        double decayLength = properCTau * betaGamma;
-
-        // Get the B0’s momentum components
-        double px   = p.px();
-        double py   = p.py();
-        double pz   = p.pz();
-
-        // Compute the magnitude of the B0 3‑momentum
-        double pMag = std::sqrt(px*px + py*py + pz*pz);
-
-        // Build the unit direction vector of B0
-        double dirX = px / pMag;
-        double dirY = py / pMag;
-        double dirZ = pz / pMag;
-
-        double SVx_true = PVx + dirX * decayLength;
-        double SVy_true = PVy + dirY * decayLength;
-        double SVz_true = PVz + dirZ * decayLength;
-/*
-        // 5.d) Measurement smearing of SV
-        SVx = SVx_true + smearSVxy(rng);
-        SVy = SVy_true + smearSVxy(rng);
-        SVz = SVz_true + smearSVz(rng);
-        // 5.e) Assign uncertainties and chi2
-        SVxErr = smearSVxy.stddev();
-        SVyErr = smearSVxy.stddev();
-        SVzErr = smearSVz.stddev();
-        double chi2 = chi2Dist(rng);
-        double chi2ndf = chi2/9;  // Since DOF = 9
-        vertexChi2 = chi2ndf;*/
 
         // EvtGen decay
         EvtVector4R  mom( p.e(), p.px(), p.py(), p.pz() );
@@ -268,12 +249,43 @@ int main(int argc, char* argv[]) {
         if (tau) collectLeaves(tau,  tauLeaves);
         if (mu) collectLeaves(mu,  muLeaves);
 
+        // pick up muon and save its kinematics
+        EvtParticle* muPart = nullptr;
+        for (auto p : muLeaves) {
+          if (std::abs(EvtPDL::getStdHep(p->getId())) == 13) {
+            muPart = p;
+            break;
+          }
+        }
+        if (muPart) {
+          auto pos = muPart->get4Pos();
+          mu_x = pos.get(1) + smearSVxy(rng);
+          mu_y = pos.get(2) + smearSVxy(rng);
+          mu_z = pos.get(3) + smearSVz (rng);
+          auto p4 = muPart->getP4Lab();
+          TLorentzVector mu4(p4.get(1), p4.get(2), p4.get(3), p4.get(0));
+          mu_pt  = mu4.Pt();
+          mu_eta = mu4.Eta();
+          mu_phi = mu4.Phi();
+          // 3D impact parameter = | (muOrig – PV) × muDir |
+          TVector3 PV(PVx, PVy, PVz);
+          TVector3 muOrig(mu_x, mu_y, mu_z);
+          TVector3 muDir = mu4.Vect().Unit();
+          TVector3 d3 = muOrig - PV;
+          IP_mu = d3.Cross(muDir).Mag();
+        } else {
+          mu_pt = mu_eta = mu_phi = -999.;
+          mu_x = mu_y = mu_z = -999.;
+          IP_mu = -999.;
+        }
+
+
         auto sumVisible = [&](const std::vector<EvtParticle*>& leaves) -> std::pair<TLorentzVector, std::vector<TLorentzVector>>{
           TLorentzVector sum(0,0,0,0);
           std::vector<TLorentzVector> visTracks;
           for(auto dau : leaves){
             int pdg = EvtPDL::getStdHep(dau->getId());
-            std::cout << "[DEBUG]   leaf PDG="<<pdg<<"\n";
+            //std::cout << "[DEBUG]   leaf PDG="<<pdg<<"\n";
             if (std::abs(pdg)==12 || std::abs(pdg)==14 || std::abs(pdg)==16) continue;
             auto p4 = dau->getP4Lab();
             TLorentzVector v(p4.get(1), p4.get(2), p4.get(3), p4.get(0));
@@ -283,9 +295,19 @@ int main(int argc, char* argv[]) {
           return std::make_pair(sum, visTracks);
         };
 
-        TLorentzVector kstarReco = sumVisible(kstarLeaves).first;
-        TLorentzVector tauReco = sumVisible(tauLeaves).first;
-        TLorentzVector muReco = sumVisible(muLeaves).first;
+        auto [kstarReco, kstarVis] = sumVisible(kstarLeaves);
+        auto [tauReco,   tauVis]   = sumVisible(tauLeaves);
+        auto [muReco,    muVis]    = sumVisible(muLeaves);
+
+        //eta cut on all visible particles, CMS realistic
+        bool allInEta = true;
+        for (auto &v : kstarVis) if (std::abs(v.Eta()) > 2.5) { allInEta=false; break; }
+        for (auto &v : tauVis)   if (allInEta && std::abs(v.Eta()) > 2.5) { allInEta=false; break; }
+        for (auto &v : muVis)    if (allInEta && std::abs(v.Eta()) > 2.5) { allInEta=false; break; }
+        if (!allInEta) {
+          delete evtB;
+          continue;
+        }
 
         // relative pt error for low pt << 100GeV
         double sigma_pt_rel = 0.007;
@@ -333,50 +355,32 @@ int main(int argc, char* argv[]) {
         float chi2;
         if (!FitVertex(tracks, 0.1, vtx, chi2)) continue;
 
-        //int ndof = static_cast<int>(tracks.size())*2 - 3;     // 2 constraints per track minus 3 free coords
-        //float chi2ndf = chi2 / ndof;
         SVx        = vtx.X();
         SVy        = vtx.Y();
         SVz        = vtx.Z();
         vertexChi2 = chi2;
-        std::cout << "[CHECK] Vertex Chi2 value: " << chi2 << std::endl;
+        //std::cout << "[CHECK] Vertex Chi2 value: " << chi2 << std::endl;
 
-        /*bool gotKstar = false, gotTauplus = false, gotTauminus = false;
-
-        // ─── 5.d) Walk the decay tree to pull out your final‑state taus, K*, etc.
-        std::vector<EvtParticle*> finalDau;
-        std::function<void(EvtParticle*)> collect = [&](EvtParticle* par){
-          if (par->getNDaug()==0) {
-            finalDau.push_back(par);
-          } else {
-            for (int d=0; d<par->getNDaug(); ++d)
-              collect(par->getDaug(d));
-          }
-        };
-        collect(evtB);
-
-
-        //NOTE: Maybe use recursive search for particles instead of leaf search to get all the particles!!
-        // Fill daughter kinematics
-        for (auto dau : finalDau) {
-          EvtId id = dau->getId();
-          auto p4 = dau->getP4Lab();
-          TLorentzVector v(p4.get(1), p4.get(2), p4.get(3), p4.get(0));
-          if (id == EvtPDL::getId("K*0") || id == EvtPDL::getId("anti-K*0")) {
-            kst_pt = v.Pt(); kst_eta = v.Eta(); kst_phi = v.Phi();
-            gotKstar = true;
-          } else if (id == EvtPDL::getId("tau+")) {
-            tauPlus_pt = v.Pt(); tauPlus_eta = v.Eta(); tauPlus_phi = v.Phi();
-            gotTauplus = true;
-          } else if (id == EvtPDL::getId("mu-")) {
-            tauMinus_pt = v.Pt(); tauMinus_eta = v.Eta(); tauMinus_phi = v.Phi();
-            gotTauminus = true;
-          }
-        }*/
         tree.Fill();
         delete evtB;
+        ++passed;
+        if (passed >= targetPassed) {
+          std::cout
+            << "Generated " << generated
+            << " events to save " << passed
+            << " events.\n";
+          done = true;
+          break;
+        }
       }
     }
+  }
+
+  if (passed < targetPassed) {
+    std::cout
+      << "Loop ended after " << generated
+      << " generated events, but only "
+      << passed << " passed cuts.\n";
   }
 
   std::cout << "Entries: " << tree.GetEntries() << std::endl;
