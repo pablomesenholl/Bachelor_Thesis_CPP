@@ -1,5 +1,5 @@
 Decay tau+
-  1.0 mu+ nu_mu anti-nu_tau TAUOLA;
+  TAUOLA;
 Enddecay
 
 End

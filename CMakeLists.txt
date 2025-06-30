@@ -54,6 +54,7 @@ find_library(PHOTOS_PP_HEPMC3 PhotosppHepMC3Event HINTS /home/pablo/photos-insta
 target_include_directories(test_evtgen PRIVATE
         ${PYTHIA8_INCLUDE_DIR}
         /home/pablo/evtgen-new-install/include
+        /home/pablo/tauola-install/include
 )
 
 target_link_directories(test_evtgen PRIVATE
@@ -61,6 +62,11 @@ target_link_directories(test_evtgen PRIVATE
 )
 
 target_link_libraries(test_evtgen
+        ROOT::RIO
+        ROOT::Hist
+        ROOT::Gpad
+        ROOT::Tree
+        ROOT::Physics
         ${PYTHIA8_LIBRARY}
         EvtGen
         EvtGenExternal

@@ -114,7 +114,7 @@ using namespace Pythia8;
 
 int main(int argc, char* argv[]) {
   // Number of events (default 100k if not passed)
-  int nEvents = 100000;
+  int nEvents = 20000;
   if (argc > 1) nEvents = atoi(argv[1]);
 
   // Configure Pythia for pp collisions @ 13 TeV, b-quark production
@@ -126,7 +126,7 @@ int main(int argc, char* argv[]) {
   pythia.readString("Random:seed = 22");           // set seed
   pythia.readString("HardQCD:gg2bbbar = on");      // turn on gg->bb
   pythia.readString("HardQCD:qqbar2bbbar = on");   // turn on qqbar->bb
-  pythia.readString("PhaseSpace:pTHatMin = 5.");   // pT hat cut (GeV)
+  // pythia.readString("PhaseSpace:pTHatMin = 40.");   // pT hat cut (GeV)
 
   // Vertex smearing for primary vertex (Gaussian)
   pythia.readString("Beams:allowVertexSpread = on");
@@ -171,7 +171,7 @@ int main(int argc, char* argv[]) {
 
 
   // 4) Prepare output ROOT file & TTree for B0 kinematics + vertices + uncertainties
-  TFile outFile("Simulation_Data_Smeared.root", "RECREATE");
+  TFile outFile("Simulation_Data_test.root", "RECREATE");
   TTree tree("Events", "B0 -> Kst Tau Tau production with vertices and uncertainties");
 
   // Kinematics
@@ -248,18 +248,28 @@ int main(int argc, char* argv[]) {
   std::mt19937 rng(42);
   std::normal_distribution<double> smearSVxy(0.0, 0.01);    // mm (SV spatial resolution)
   std::normal_distribution<double> smearSVz(0.0, 0.035);      // mm
-  std::chi_squared_distribution<double> chi2Dist(9);   // chi2 with n DOF
 
   //stop when reaching goal of events
   int passed = 0;
   int generated = 0;
-  const int targetPassed = 8000;
+  const int targetPassed = 20000;
   bool done = false;
 
   // Event loop: find all B0 in the event record
   for (int iEvent = 0; iEvent < nEvents && !done; ++iEvent) {
     if (!pythia.next()) continue;
     ++generated;
+
+    // look for a B⁰ with pT > 10 GeV
+    bool keep = false;
+    for (auto& p : pythia.event) {
+      if ( (p.id()==511 || p.id()==-511) && p.pT() > 10.0 ) {
+        keep = true;
+        break;
+      }
+    }
+    if (!keep) continue;
+
 
     for (int i = 0; i < pythia.event.size(); ++i) {
       const Particle& p = pythia.event[i];
@@ -377,6 +387,10 @@ int main(int argc, char* argv[]) {
           mu_pt  = mu4.Pt();
           mu_eta = mu4.Eta();
           mu_phi = mu4.Phi();
+          if (mu_pt < 5.0) {
+            delete evtB;
+            continue;
+          }
           // 3D impact parameter = | (muOrig – PV) × muDir |
           TVector3 PV(PVx, PVy, PVz);
           TVector3 muOrig(mu_x, mu_y, mu_z);

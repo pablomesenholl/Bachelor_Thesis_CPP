@@ -80,7 +80,7 @@ using namespace Pythia8;
 
 int main(int argc, char* argv[]) {
   // Number of events
-  int nEvents = 50000;
+  int nEvents = 1000000;
   if (argc > 1) nEvents = atoi(argv[1]);
 
   // 1) Configure Pythia
@@ -91,7 +91,7 @@ int main(int argc, char* argv[]) {
   pythia.readString("Random:seed = 22");           // set seed
   pythia.readString("HardQCD:gg2bbbar = on");
   pythia.readString("HardQCD:qqbar2bbbar = on");
-  pythia.readString("PhaseSpace:pTHatMin = 5.");
+  pythia.readString("PhaseSpace:pTHatMin = 40.");
   pythia.readString("Beams:allowVertexSpread = on");
   pythia.readString("Beams:sigmaVertexX = 0.01");
   pythia.readString("Beams:sigmaVertexY = 0.01");
@@ -128,7 +128,7 @@ int main(int argc, char* argv[]) {
   );
 
   // 3) Output file and tree
-  TFile outFile("Specific_Background_smeared.root", "RECREATE");
+  TFile outFile("Specific_Background_Final.root", "RECREATE");
   TTree tree("Events", "Simulation of Specific Backgrounds");
   // Branch definitions
   Float_t ptB, etaB, phiB;
@@ -186,12 +186,22 @@ int main(int argc, char* argv[]) {
   //stop when reaching goal of events
   int passed = 0;
   int generated = 0;
-  const int targetPassed = 8000;
+  const int targetPassed = 10000;
   bool done = false;
 
   for (int iEvent = 0; iEvent < nEvents && !done; ++iEvent) {
     if (!pythia.next()) continue;
     ++generated;
+    // look for a B⁰ with pT > 10 GeV
+    bool keep = false;
+    for (auto& p : pythia.event) {
+      if ( (p.id()==511 || p.id()==-511) && p.pT() > 10.0 ) {
+        keep = true;
+        break;
+      }
+    }
+    if (!keep) continue;
+
     for (int i = 0; i < pythia.event.size(); ++i) {
       const Particle& p = pythia.event[i];
       if ((p.id()==511 || p.id()==-511) && p.isFinal()) {
@@ -267,6 +277,10 @@ int main(int argc, char* argv[]) {
           mu_pt  = mu4.Pt();
           mu_eta = mu4.Eta();
           mu_phi = mu4.Phi();
+          if (mu_pt < 5.0) {
+            delete evtB;
+            continue;
+          }
           // 3D impact parameter = | (muOrig – PV) × muDir |
           TVector3 PV(PVx, PVy, PVz);
           TVector3 muOrig(mu_x, mu_y, mu_z);

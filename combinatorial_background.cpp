@@ -98,7 +98,7 @@ inline double VertexDistance(const Pythia8::Particle& a, const Pythia8::Particle
 using namespace Pythia8;
 
 int main(int argc, char* argv[]) {
-    int nEvents = 1000000;
+    int nEvents = 50000;
     if (argc > 1) nEvents = atoi(argv[1]);
 
     // Configure Pythia for pp collisions @ 13 TeV
@@ -107,18 +107,12 @@ int main(int argc, char* argv[]) {
     pythia.readString("Beams:idB = 2212");
     pythia.readString("Beams:eCM = 13600.");            // e.g. 13 TeV
     pythia.readString("Random:seed = 22");           // set seed
-    pythia.readString("PhaseSpace:pTHatMin = 5");
+    // pythia.readString("PhaseSpace:pTHatMin = 40.");
     pythia.readString("HardQCD:all = off");
     pythia.readString("HardQCD:gg2ccbar   = on");
     pythia.readString("HardQCD:qqbar2ccbar= on");
     pythia.readString("HardQCD:gg2bbbar   = on");
     pythia.readString("HardQCD:qqbar2bbbar= on");
-    /*pythia.readString("211:mayDecay = off");        // pions
-    pythia.readString("-211:mayDecay = off");
-    pythia.readString("321:mayDecay = off");        // kaons
-    pythia.readString("-321:mayDecay = off");
-    pythia.readString("13:mayDecay = off");        // muons
-    pythia.readString("-13:mayDecay = off");*/
 
 
     // Vertex smearing for primary vertex (Gaussian)
@@ -133,7 +127,7 @@ int main(int argc, char* argv[]) {
 
 
     // Prepare output ROOT file & TTree
-    TFile outFile("Combinatorial_Background_smeared.root", "RECREATE");
+    TFile outFile("Combinatorial_Background_test.root", "RECREATE");
     TTree tree("Events", "Random combinatorial background");
 
     Float_t PVx, PVy, PVz;
@@ -199,7 +193,7 @@ int main(int argc, char* argv[]) {
     //stop when reaching goal of events
     int passed = 0;
     int generated = 0;
-    const int targetPassed = 8000;
+    const int targetPassed = 10000;
     bool done = false;
 
     for (int iEvent = 0; iEvent < nEvents && !done; ++iEvent) {
@@ -208,6 +202,17 @@ int main(int argc, char* argv[]) {
         }
         if (!pythia.next()) continue;
         ++generated;
+        bool hasHighPtMu = false;
+        for (int i = 0; i < pythia.event.size(); ++i) {
+            const auto& p = pythia.event[i];
+            if ( p.isFinal()
+              && std::abs(p.id()) == 13
+              && p.pT() > 5.0 ) {
+                hasHighPtMu = true;
+                break;
+              }
+        }
+        if (!hasHighPtMu) continue;
 
         // Clear containers at start of each event
         storeK.clear();
